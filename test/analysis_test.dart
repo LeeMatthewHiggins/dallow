@@ -65,6 +65,15 @@ void main() {
     test('flags dev dependencies imported from lib/', () {
       expect(of(CheckKind.misplacedDependency), contains('path'));
     });
+
+    test('does not flag a federated plugin implementation as unused', () {
+      // google_maps_flutter_web is never imported, but its base plugin
+      // google_maps_flutter is a declared dependency.
+      expect(
+        of(CheckKind.unusedDependency),
+        isNot(contains('google_maps_flutter_web')),
+      );
+    });
   });
 
   group('circular-import check', () {
@@ -80,6 +89,16 @@ void main() {
         findings.first.message,
         allOf(contains('cycle_a.dart'), contains('cycle_b.dart')),
       );
+    });
+
+    test('skips cycles larger than maxCycleSize', () async {
+      final findings = await analyze(
+        fixture,
+        checks: {Check.circularImports},
+        maxCycleSize: 1,
+      );
+
+      expect(findings, isEmpty);
     });
   });
 

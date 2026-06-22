@@ -38,6 +38,12 @@ abstract class _CheckCommand extends Command<int> {
         allowed: ['error', 'warning', 'info', 'never'],
         defaultsTo: 'error',
         help: 'Lowest severity that causes a non-zero exit code.',
+      )
+      ..addOption(
+        'max-cycle-size',
+        help: 'Skip dependency cycles with more than this many files. Useful '
+            'to ignore a known barrel mega-cycle while still catching small '
+            'new cycles.',
       );
   }
 
@@ -52,9 +58,18 @@ abstract class _CheckCommand extends Command<int> {
       return 64;
     }
 
+    final maxCycleSizeRaw = argResults!['max-cycle-size'] as String?;
+    final maxCycleSize =
+        maxCycleSizeRaw == null ? null : int.tryParse(maxCycleSizeRaw);
+    if (maxCycleSizeRaw != null && maxCycleSize == null) {
+      stderr.writeln('--max-cycle-size must be an integer: $maxCycleSizeRaw');
+      return 64;
+    }
+
     final List<Finding> findings;
     try {
-      findings = await analyze(root, checks: checks);
+      findings =
+          await analyze(root, checks: checks, maxCycleSize: maxCycleSize);
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;

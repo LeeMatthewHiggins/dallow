@@ -23,6 +23,7 @@ Future<List<Finding>> analyze(
     Check.dependencies,
     Check.circularImports,
   },
+  int? maxCycleSize,
 }) async {
   final findings = <Finding>[];
 
@@ -32,7 +33,9 @@ Future<List<Finding>> analyze(
       findings.addAll(const DeadCodeCheck().run(graph));
     }
     if (checks.contains(Check.circularImports)) {
-      findings.addAll(const CircularImportCheck().run(graph));
+      findings.addAll(
+        const CircularImportCheck().run(graph, maxCycleSize: maxCycleSize),
+      );
     }
   }
 
