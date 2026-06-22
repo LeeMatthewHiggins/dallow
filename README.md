@@ -47,7 +47,7 @@ dallow circular [path]     # only circular imports
 | --- | --- | --- |
 | `-f, --format` | `console`, `json`, or `markdown` | `console` |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
-| `--max-cycle-size` | Skip dependency cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
+| `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
 
 ### Exit codes
 
