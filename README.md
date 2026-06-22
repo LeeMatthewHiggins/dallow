@@ -51,7 +51,13 @@ dallow circular [path]     # only circular imports
 
 ### Exit codes
 
-`0` when nothing at or above the `--fail-on` threshold is found, `1` otherwise.
+| Code | Meaning |
+| --- | --- |
+| `0` | Nothing at or above the `--fail-on` threshold was found |
+| `1` | Findings at or above the `--fail-on` threshold |
+| `64` | Usage error (bad directory, non-integer or out-of-range `--max-cycle-size`) |
+| `69` | No Dart SDK could be located to back the analyzer |
+
 This makes dallow a CI gate:
 
 ```sh

@@ -42,6 +42,12 @@ void main() {
       final dead = findings.firstWhere((f) => f.symbol == 'deadFunction');
       expect(dead.message, contains('function'));
     });
+
+    test('flags a dead extension type and labels it', () {
+      expect(symbols, contains('DeadId'));
+      final dead = findings.firstWhere((f) => f.symbol == 'DeadId');
+      expect(dead.message, contains('extension type'));
+    });
   });
 
   group('dependency check', () {
@@ -99,6 +105,24 @@ void main() {
       );
 
       expect(findings, isEmpty);
+    });
+
+    test('reports a cycle exactly at maxCycleSize (boundary)', () async {
+      // The fixture cycle is 2 files: skipped at 1, reported at 2 — pinning
+      // the `>` (not `>=`) comparison.
+      final atTwo = await analyze(
+        fixture,
+        checks: {Check.circularImports},
+        maxCycleSize: 2,
+      );
+      final atOne = await analyze(
+        fixture,
+        checks: {Check.circularImports},
+        maxCycleSize: 1,
+      );
+
+      expect(atTwo, isNotEmpty);
+      expect(atOne, isEmpty);
     });
   });
 

@@ -2,6 +2,11 @@ import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/graph/code_graph.dart';
 import 'package:path/path.dart' as p;
 
+/// The smallest possible cycle: two files depending on each other. A
+/// `--max-cycle-size` below this would skip every cycle and silently disable
+/// the check.
+const minCycleSize = 2;
+
 /// The number of member files named inline before a cycle's message is
 /// truncated with an "(+N more)" suffix, to keep barrel-induced mega-cycles
 /// from flooding the report.
@@ -26,7 +31,7 @@ class CircularImportCheck {
 
     final findings = <Finding>[];
     for (final component in components) {
-      if (component.length < 2) continue;
+      if (component.length < minCycleSize) continue;
       if (maxCycleSize != null && component.length > maxCycleSize) continue;
 
       final cycle = component

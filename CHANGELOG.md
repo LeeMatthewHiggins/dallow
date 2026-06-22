@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Dead code: register Dart 3 `extension type` declarations, so a dead one is
+  flagged (labelled "extension type") instead of silently skipped.
+- Circular imports: `--max-cycle-size` now rejects values below the smallest
+  possible cycle (2) with a usage error, instead of silently disabling the
+  check.
+- Docs: README exit-codes section now documents `64` (usage) and `69` (no SDK)
+  alongside `0`/`1`.
+- Build: `tool/build.sh` aborts loudly if no platform binary was produced,
+  rather than packaging a binary-less zip.
+
 - Deps: federated plugin implementations (`<base>_web`, `<base>_android`,
   `<base>_platform_interface`, …) are no longer flagged as unused when their
   base plugin is a declared dependency.
