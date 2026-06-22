@@ -103,6 +103,14 @@ void main() {
     });
   });
 
+  group('sdk resolution', () {
+    test('locates a Dart SDK in the test environment', () {
+      final sdk = resolveSdkPath();
+      expect(sdk, isNotNull);
+      expect(p.join(sdk!, 'version'), isNotEmpty);
+    });
+  });
+
   group('reporters', () {
     final findings = [
       const Finding(

@@ -52,7 +52,13 @@ abstract class _CheckCommand extends Command<int> {
       return 64;
     }
 
-    final findings = await analyze(root, checks: checks);
+    final List<Finding> findings;
+    try {
+      findings = await analyze(root, checks: checks);
+    } on SdkNotFoundException catch (e) {
+      stderr.writeln(e.message);
+      return 69;
+    }
 
     final format = ReportFormat.values.byName(argResults!['format'] as String);
     stdout.writeln(Reporter(format).render(findings));
