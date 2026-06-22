@@ -1,0 +1,13 @@
+# Dart / Pub
+.dart_tool/
+.packages
+pubspec.lock
+build/
+
+# Fixtures resolve against the repo, no lockfile needed
+test/fixtures/**/.dart_tool/
+
+# Editor
+.idea/
+*.iml
+.vscode/

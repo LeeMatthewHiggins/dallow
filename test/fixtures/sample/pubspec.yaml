@@ -1,0 +1,14 @@
+name: sample
+description: Fixture package exercising every dallow check.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  meta: ^1.0.0
+
+dev_dependencies:
+  path: ^1.9.0
+
