@@ -205,6 +205,7 @@ class CodeGraph {
     for (final element in _topLevelElements(result.libraryElement)) {
       final name = element.name;
       if (name == null || name.isEmpty) continue;
+      if (element.isSynthetic) continue;
       if (result.path != element.source?.fullName) continue;
 
       final isPrivate = name.startsWith('_');

@@ -31,6 +31,13 @@ void main() {
       expect(symbols, isNot(contains('TypedefThing')));
     });
 
+    test('does not emit a phantom finding for an explicit getter', () {
+      // An explicit `get x` has a synthetic backing variable (nameOffset -1);
+      // it must not be registered as a dead symbol.
+      expect(symbols, isNot(contains('_viaGetter')));
+      expect(findings.every((f) => (f.line ?? -1) >= 1), isTrue);
+    });
+
     test('labels the dead symbol with its element kind', () {
       final dead = findings.firstWhere((f) => f.symbol == 'deadFunction');
       expect(dead.message, contains('function'));

@@ -10,6 +10,10 @@ typedef Handler = void Function(TypedefThing thing);
 
 Handler? handler;
 
+String get _viaGetter => used();
+
+String get exposedViaGetter => _viaGetter;
+
 String runSample() {
   final items = [used(), p.basename('a/b')];
   return items.firstOrNull ?? '';
