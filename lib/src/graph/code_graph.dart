@@ -58,7 +58,14 @@ class CodeGraph {
   /// inside the analysed package.
   final Map<String, Set<String>> imports = {};
 
+  final Set<CodeNode> _exportedApi = {};
+
   Iterable<CodeNode> get nodes => _nodes.values;
+
+  /// Nodes that form the package's public API surface, including symbols
+  /// surfaced from `lib/src/` through a re-`export` from a public library.
+  /// These are reachability roots: exporting a symbol is using it.
+  Set<CodeNode> get exportedApi => _exportedApi;
 
   /// Resolves every `.dart` file reachable from [rootPath] and builds the
   /// symbol and import graphs.
@@ -86,10 +93,29 @@ class CodeGraph {
     for (final unit in resolvedUnits) {
       graph
         .._registerReferences(unit)
-        .._registerImports(unit);
+        .._registerImports(unit)
+        .._registerExportedApi(unit);
     }
 
     return graph;
+  }
+
+  /// Records the public export surface of each public (`lib/`, non-`src`)
+  /// library. Walking the resolved export namespace captures re-exports and
+  /// `show`/`hide` combinators without re-implementing combinator logic.
+  void _registerExportedApi(ResolvedUnitResult result) {
+    final library = result.libraryElement;
+    if (library.source.fullName != result.path) return;
+
+    final relativePath = p.relative(result.path, from: rootPath);
+    final isUnderLib = _isUnder(relativePath, 'lib');
+    final isUnderLibSrc = _isUnder(relativePath, p.join('lib', 'src'));
+    if (!isUnderLib || isUnderLibSrc) return;
+
+    for (final element in library.exportNamespace.definedNames.values) {
+      final node = ownerOf(element);
+      if (node != null) _exportedApi.add(node);
+    }
   }
 
   void _registerDeclarations(ResolvedUnitResult result) {
@@ -230,11 +256,23 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   }
 
   @override
+  void visitGenericTypeAlias(GenericTypeAlias node) {
+    _withOwner(node.declaredElement, () => super.visitGenericTypeAlias(node));
+  }
+
+  @override
+  void visitFunctionTypeAlias(FunctionTypeAlias node) {
+    _withOwner(node.declaredElement, () => super.visitFunctionTypeAlias(node));
+  }
+
+  @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
-    final element = node.variables.variables.isEmpty
-        ? null
-        : node.variables.variables.first.declaredElement;
-    _withOwner(element, () => super.visitTopLevelVariableDeclaration(node));
+    final variables = node.variables.variables;
+    final first = variables.isEmpty ? null : variables.first.declaredElement;
+    _withOwner(first, () => node.variables.type?.accept(this));
+    for (final variable in variables) {
+      _withOwner(variable.declaredElement, () => variable.accept(this));
+    }
   }
 
   @override

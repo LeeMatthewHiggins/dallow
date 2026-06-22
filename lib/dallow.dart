@@ -4,5 +4,6 @@ library;
 
 export 'src/analysis.dart';
 export 'src/finding.dart';
+export 'src/gate.dart';
 export 'src/graph/code_graph.dart';
 export 'src/report/reporter.dart';

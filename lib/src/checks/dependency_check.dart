@@ -17,7 +17,14 @@ const _toolingPackages = {
   'cupertino_icons',
 };
 
-final _packageImport = RegExp('''package:([a-zA-Z0-9_]+)/''');
+/// Matches a `package:` specifier at the start of an `import`/`export`
+/// directive line, so mentions inside comments or string literals are not
+/// mistaken for real usage. Alternative specifiers of a conditional import
+/// (the `if (...) '...'` branch) are not matched.
+final _packageImport = RegExp(
+  r'''^\s*(?:import|export)\s+['"]package:([a-zA-Z0-9_]+)/''',
+  multiLine: true,
+);
 
 /// Cross-references declared `pubspec.yaml` dependencies against the
 /// `package:` imports actually present in the source tree.

@@ -57,14 +57,8 @@ abstract class _CheckCommand extends Command<int> {
     final format = ReportFormat.values.byName(argResults!['format'] as String);
     stdout.writeln(Reporter(format).render(findings));
 
-    return _exitCode(findings, argResults!['fail-on'] as String);
-  }
-
-  int _exitCode(List<Finding> findings, String failOn) {
-    if (failOn == 'never') return 0;
-    final threshold = Severity.values.byName(failOn);
-    final gated = findings.any((f) => f.severity.index <= threshold.index);
-    return gated ? 1 : 0;
+    final failOn = FailOn.values.byName(argResults!['fail-on'] as String);
+    return exitCodeFor(findings, failOn: failOn);
   }
 }
 

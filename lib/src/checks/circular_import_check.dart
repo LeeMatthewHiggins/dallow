@@ -2,10 +2,12 @@ import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/graph/code_graph.dart';
 import 'package:path/path.dart' as p;
 
-/// Detects import cycles between files in the analysed package.
+/// Detects dependency cycles between files in the analysed package.
 ///
-/// Cycles are the strongly-connected components of the file-level import graph
-/// with more than one member, plus any single file that imports itself.
+/// The graph folds both `import` and `export` edges, so a cycle is any
+/// strongly-connected component of that graph with more than one member.
+/// Members are listed in sorted order for determinism; this is the cycle's
+/// membership, not a traversal path.
 class CircularImportCheck {
   const CircularImportCheck();
 
@@ -14,10 +16,7 @@ class CircularImportCheck {
 
     final findings = <Finding>[];
     for (final component in components) {
-      final first = component.first;
-      final selfCycle = component.length == 1 &&
-          (graph.imports[first]?.contains(first) ?? false);
-      if (component.length < 2 && !selfCycle) continue;
+      if (component.length < 2) continue;
 
       final cycle = component
           .map((f) => p.relative(f, from: graph.rootPath))
@@ -27,8 +26,8 @@ class CircularImportCheck {
         Finding(
           kind: CheckKind.circularImport,
           severity: Severity.warning,
-          message: 'Import cycle between ${cycle.length} files: '
-              '${cycle.join(' → ')}.',
+          message: 'Dependency cycle among ${cycle.length} files: '
+              '${cycle.join(', ')}.',
           file: cycle.first,
         ),
       );
