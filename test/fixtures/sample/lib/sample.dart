@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:path/path.dart' as p;
 
 import 'src/internal_for_typedef.dart';

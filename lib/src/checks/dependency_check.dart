@@ -17,6 +17,21 @@ const _toolingPackages = {
   'cupertino_icons',
 };
 
+/// Federated-plugin suffixes. A platform implementation (`<base>_web`,
+/// `<base>_android`, …) or the shared interface (`<base>_platform_interface`)
+/// is pulled in so the right code is bundled per platform, but is never
+/// imported directly — the app imports `<base>` only. Such a dependency is
+/// not "unused" when its base plugin is also a declared dependency.
+const _federatedSuffixes = [
+  '_platform_interface',
+  '_android',
+  '_ios',
+  '_web',
+  '_macos',
+  '_windows',
+  '_linux',
+];
+
 /// Matches a `package:` specifier at the start of an `import`/`export`
 /// directive line, so mentions inside comments or string literals are not
 /// mistaken for real usage. Alternative specifiers of a conditional import
@@ -72,7 +87,9 @@ class DependencyCheck {
     Set<String> usedAnywhere,
   ) sync* {
     for (final name in dependencies) {
-      if (usedAnywhere.contains(name) || _toolingPackages.contains(name)) {
+      if (usedAnywhere.contains(name) ||
+          _toolingPackages.contains(name) ||
+          _isFederatedImplementation(name, dependencies)) {
         continue;
       }
       yield Finding(
@@ -83,6 +100,15 @@ class DependencyCheck {
         symbol: name,
       );
     }
+  }
+
+  bool _isFederatedImplementation(String name, Set<String> dependencies) {
+    for (final suffix in _federatedSuffixes) {
+      if (!name.endsWith(suffix)) continue;
+      final base = name.substring(0, name.length - suffix.length);
+      if (base.isNotEmpty && dependencies.contains(base)) return true;
+    }
+    return false;
   }
 
   Iterable<Finding> _misplacedDependencies(
