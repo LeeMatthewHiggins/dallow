@@ -65,6 +65,7 @@ class DeadCodeCheck {
     if (element is TypeAliasElement) return 'typedef';
     if (element is EnumElement) return 'enum';
     if (element is MixinElement) return 'mixin';
+    if (element is ExtensionTypeElement) return 'extension type';
     if (element is ExtensionElement) return 'extension';
     if (element is ClassElement) return 'class';
     if (element is PropertyAccessorElement ||

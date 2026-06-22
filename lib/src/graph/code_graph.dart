@@ -270,6 +270,10 @@ class CodeGraph {
       yield* unit.enums;
       yield* unit.mixins;
       yield* unit.extensions;
+      // The enumeration API carries an experimental annotation, but extension
+      // types are a stable language feature; this is the way to list them.
+      // ignore: experimental_member_use
+      yield* unit.extensionTypes;
       yield* unit.typeAliases;
       yield* unit.topLevelVariables;
       for (final accessor in unit.accessors) {

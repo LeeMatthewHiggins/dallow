@@ -35,6 +35,15 @@ build_linux() {
 build_linux amd64 linux/amd64 || echo "   linux-amd64 build failed, skipping"
 build_linux arm64 linux/arm64 || echo "   linux-arm64 build failed, skipping"
 
+# Without nullglob an empty bin/ would leave the literal `dallow-*` in the
+# platforms: map and ship a binary-less zip; abort loudly instead.
+shopt -s nullglob
+binaries=("$stage"/bin/dallow-*)
+if [[ ${#binaries[@]} -eq 0 ]]; then
+  echo "error: no binaries built for any platform; refusing to package an empty tool zip" >&2
+  exit 1
+fi
+
 echo "==> assembling zip"
 cp "$repo_root/LICENSE" "$repo_root/README.md" "$stage/"
 
@@ -45,7 +54,7 @@ cp "$repo_root/LICENSE" "$repo_root/README.md" "$stage/"
   echo "name: dallow"
   echo "description: Codebase intelligence for Dart/Flutter — finds dead code, dependency hygiene problems, and circular imports. Reads stdout as JSON or text."
   echo "platforms:"
-  for bin in "$stage"/bin/dallow-*; do
+  for bin in "${binaries[@]}"; do
     name="$(basename "$bin")"
     key="${name#dallow-}"
     printf '  %s: bin/%s\n' "$key" "$name"

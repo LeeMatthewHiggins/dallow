@@ -65,6 +65,14 @@ abstract class _CheckCommand extends Command<int> {
       stderr.writeln('--max-cycle-size must be an integer: $maxCycleSizeRaw');
       return 64;
     }
+    if (maxCycleSize != null && maxCycleSize < minCycleSize) {
+      stderr.writeln(
+        '--max-cycle-size must be at least $minCycleSize (the smallest '
+        'possible cycle); $maxCycleSize would skip every cycle and disable '
+        'the check.',
+      );
+      return 64;
+    }
 
     final List<Finding> findings;
     try {
