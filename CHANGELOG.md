@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Deps: federated plugin implementations (`<base>_web`, `<base>_android`,
+  `<base>_platform_interface`, …) are no longer flagged as unused when their
+  base plugin is a declared dependency.
+- Circular imports: long cycle membership is truncated in the message with an
+  "(+N more)" suffix, and a new `--max-cycle-size` flag skips cycles above a
+  given size (e.g. a known barrel mega-cycle) while still catching small ones.
+- Dead code: skip synthetic elements at registration, so an explicit getter's
+  synthetic backing variable is no longer reported as a phantom dead symbol.
+
 - Dead code: seed each public library's export namespace as a reachability
   root, so `lib/src/` symbols surfaced through a barrel re-export are no longer
   false-flagged.

@@ -31,6 +31,13 @@ void main() {
       expect(symbols, isNot(contains('TypedefThing')));
     });
 
+    test('does not emit a phantom finding for an explicit getter', () {
+      // An explicit `get x` has a synthetic backing variable (nameOffset -1);
+      // it must not be registered as a dead symbol.
+      expect(symbols, isNot(contains('_viaGetter')));
+      expect(findings.every((f) => (f.line ?? -1) >= 1), isTrue);
+    });
+
     test('labels the dead symbol with its element kind', () {
       final dead = findings.firstWhere((f) => f.symbol == 'deadFunction');
       expect(dead.message, contains('function'));
@@ -58,6 +65,15 @@ void main() {
     test('flags dev dependencies imported from lib/', () {
       expect(of(CheckKind.misplacedDependency), contains('path'));
     });
+
+    test('does not flag a federated plugin implementation as unused', () {
+      // google_maps_flutter_web is never imported, but its base plugin
+      // google_maps_flutter is a declared dependency.
+      expect(
+        of(CheckKind.unusedDependency),
+        isNot(contains('google_maps_flutter_web')),
+      );
+    });
   });
 
   group('circular-import check', () {
@@ -73,6 +89,16 @@ void main() {
         findings.first.message,
         allOf(contains('cycle_a.dart'), contains('cycle_b.dart')),
       );
+    });
+
+    test('skips cycles larger than maxCycleSize', () async {
+      final findings = await analyze(
+        fixture,
+        checks: {Check.circularImports},
+        maxCycleSize: 1,
+      );
+
+      expect(findings, isEmpty);
     });
   });
 
@@ -100,6 +126,14 @@ void main() {
 
     test('fail-on never always passes', () {
       expect(exitCodeFor([error], failOn: FailOn.never), 0);
+    });
+  });
+
+  group('sdk resolution', () {
+    test('locates a Dart SDK in the test environment', () {
+      final sdk = resolveSdkPath();
+      expect(sdk, isNotNull);
+      expect(p.join(sdk!, 'version'), isNotEmpty);
     });
   });
 

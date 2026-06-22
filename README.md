@@ -15,7 +15,7 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 | Check | What it finds |
 | --- | --- |
 | **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol is never flagged as dead. |
-| **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. |
+| **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
 
 ## Install
@@ -47,6 +47,7 @@ dallow circular [path]     # only circular imports
 | --- | --- | --- |
 | `-f, --format` | `console`, `json`, or `markdown` | `console` |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
+| `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
 
 ### Exit codes
 
@@ -77,6 +78,8 @@ dallow analyze . --fail-on warning
 - Complexity metrics and a project health score.
 - Git-diff gating (`--changed-since <ref>`) and baselines, so CI fails only on
   newly introduced findings.
+- Barrel-cycle collapsing: name the barrel that induces a mega-cycle instead of
+  listing every member (today `--max-cycle-size` filters it out).
 - SARIF output for code-scanning platforms.
 
 ## License
