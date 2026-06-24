@@ -12,7 +12,8 @@ Future<void> main(List<String> args) async {
     ..addCommand(_AnalyzeCommand())
     ..addCommand(_DeadCodeCommand())
     ..addCommand(_DepsCommand())
-    ..addCommand(_CircularCommand());
+    ..addCommand(_CircularCommand())
+    ..addCommand(_DuplicationCommand());
 
   try {
     final code = await runner.run(args) ?? 0;
@@ -44,6 +45,11 @@ abstract class _CheckCommand extends Command<int> {
         help: 'Skip dependency cycles with more than this many files. Useful '
             'to ignore a known barrel mega-cycle while still catching small '
             'new cycles.',
+      )
+      ..addOption(
+        'min-block-size',
+        help: 'Minimum duplicate token block size. Defaults to '
+            '$defaultDuplicateBlockSize.',
       );
   }
 
@@ -73,11 +79,29 @@ abstract class _CheckCommand extends Command<int> {
       );
       return 64;
     }
+    final minBlockSizeRaw = argResults!['min-block-size'] as String?;
+    final minBlockSize =
+        minBlockSizeRaw == null ? null : int.tryParse(minBlockSizeRaw);
+    if (minBlockSizeRaw != null && minBlockSize == null) {
+      stderr.writeln('--min-block-size must be an integer: $minBlockSizeRaw');
+      return 64;
+    }
+    if (minBlockSize != null && minBlockSize < minDuplicateBlockSize) {
+      stderr.writeln(
+        '--min-block-size must be at least $minDuplicateBlockSize; smaller '
+        'matches are too noisy to gate reliably.',
+      );
+      return 64;
+    }
 
     final List<Finding> findings;
     try {
-      findings =
-          await analyze(root, checks: checks, maxCycleSize: maxCycleSize);
+      findings = await analyze(
+        root,
+        checks: checks,
+        maxCycleSize: maxCycleSize,
+        minBlockSize: minBlockSize,
+      );
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;
@@ -133,4 +157,15 @@ class _CircularCommand extends _CheckCommand {
 
   @override
   Set<Check> get checks => {Check.circularImports};
+}
+
+class _DuplicationCommand extends _CheckCommand {
+  @override
+  String get name => 'duplication';
+
+  @override
+  String get description => 'Detect duplicated Dart token blocks.';
+
+  @override
+  Set<Check> get checks => {Check.duplication};
 }

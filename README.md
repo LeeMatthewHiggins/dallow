@@ -2,7 +2,8 @@
 
 **Codebase intelligence for Dart and Flutter.** A fast, zero-config CLI that
 finds the structural rot `dart analyze` leaves behind: dead code that no
-entrypoint can reach, dependency drift in `pubspec.yaml`, and circular imports.
+entrypoint can reach, dependency drift in `pubspec.yaml`, circular imports, and
+duplicated code blocks.
 
 dallow is a Dart-native take on the ideas behind
 [fallow](https://github.com/fallow-rs/fallow) (codebase intelligence for
@@ -17,6 +18,7 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 | **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol is never flagged as dead. |
 | **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
+| **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. |
 
 ## Install
 
@@ -39,6 +41,7 @@ dallow analyze [path]      # run every check (default: current directory)
 dallow dead-code [path]    # only reachability-based dead code
 dallow deps [path]         # only dependency hygiene
 dallow circular [path]     # only circular imports
+dallow duplication [path]  # only duplicated token blocks
 ```
 
 ### Options
@@ -48,6 +51,7 @@ dallow circular [path]     # only circular imports
 | `-f, --format` | `console`, `json`, or `markdown` | `console` |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
 | `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
+| `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `20` |
 
 ### Exit codes
 
@@ -75,11 +79,12 @@ dallow analyze . --fail-on warning
 4. `pubspec.yaml` is cross-referenced against the `package:` imports actually
    present in the source tree, and the file-level import graph is scanned for
    cycles.
+5. Dart source files are tokenised with the analyzer scanner, normalised, and
+   compared with a suffix array to find repeated token blocks.
 
 ## Roadmap
 
 - Class-member-level dead code (unused methods and fields).
-- Duplication detection (suffix-array over the token stream).
 - Architecture boundary rules (layered / feature-first presets).
 - Complexity metrics and a project health score.
 - Git-diff gating (`--changed-since <ref>`) and baselines, so CI fails only on

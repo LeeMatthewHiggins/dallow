@@ -126,6 +126,54 @@ void main() {
     });
   });
 
+  group('duplication check', () {
+    final duplicationFixture = p.absolute('test', 'fixtures', 'duplication');
+
+    test('reports duplicated token blocks with every occurrence location',
+        () async {
+      final findings = await analyze(
+        duplicationFixture,
+        checks: {Check.duplication},
+      );
+
+      expect(findings, hasLength(1));
+      final finding = findings.single;
+      expect(finding.kind, CheckKind.duplicateCode);
+      expect(finding.severity, Severity.warning);
+      expect(finding.file, 'lib/duplicated.dart');
+      expect(finding.line, 1);
+      expect(finding.message, contains('lib/duplicated.dart:1'));
+      expect(finding.message, contains('lib/duplicated.dart:10'));
+    });
+
+    test('does not report a non-duplicated file', () async {
+      final findings = await analyze(
+        p.join(duplicationFixture, 'lib', 'clean.dart'),
+        checks: {Check.duplication},
+      );
+
+      expect(findings, isEmpty);
+    });
+
+    test('min-block-size filters small matches', () async {
+      final smallFixture = p.join(duplicationFixture, 'lib', 'small.dart');
+
+      final defaultFindings = await analyze(
+        smallFixture,
+        checks: {Check.duplication},
+        minBlockSize: 4,
+      );
+      final filteredFindings = await analyze(
+        smallFixture,
+        checks: {Check.duplication},
+        minBlockSize: 20,
+      );
+
+      expect(defaultFindings, isNotEmpty);
+      expect(filteredFindings, isEmpty);
+    });
+  });
+
   group('exit-code gate', () {
     const error = Finding(
       kind: CheckKind.missingDependency,

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Duplication: added a token-level duplicate-code check, `duplication`
+  subcommand, `analyze` wiring, and `--min-block-size` threshold.
 - Dead code: register Dart 3 `extension type` declarations, so a dead one is
   flagged (labelled "extension type") instead of silently skipped.
 - Circular imports: `--max-cycle-size` now rejects values below the smallest
