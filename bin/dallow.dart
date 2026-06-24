@@ -31,9 +31,10 @@ abstract class _CheckCommand extends Command<int> {
       ..addOption(
         'format',
         abbr: 'f',
-        allowed: ['console', 'json', 'markdown'],
+        allowed: ['console', 'json', 'markdown', 'sarif'],
         defaultsTo: 'console',
-        help: 'Output format.',
+        help: 'Output format. `sarif` emits a SARIF 2.1.0 log for '
+            'code-scanning platforms.',
       )
       ..addOption(
         'fail-on',

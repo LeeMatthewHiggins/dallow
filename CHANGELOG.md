@@ -18,6 +18,15 @@
   and `--baseline` (applied first, against the raw findings).
   `--report-unused-ignores` surfaces stale directives that matched nothing as
   info-level `unused-ignore` findings.
+- SARIF output: `--format sarif` emits a SARIF 2.1.0 log for code-scanning
+  platforms (e.g. GitHub Advanced Security). The single `run` advertises one
+  rule per check kind (`tool.driver.rules`, with a `shortDescription` and a
+  `defaultConfiguration.level` mapped from severity — `error`/`warning`/`note`),
+  and one `result` per finding (`ruleId` = check kind, mapped `level`, message,
+  and a `physicalLocation` with a relative POSIX URI + `startLine` when the
+  finding has a file/line). Whole-package / `pubspec.yaml` findings are emitted
+  as valid results without a `physicalLocation`. Wired through `--format` on
+  every subcommand.
 - PR gate: `--changed-since <ref>` filters findings to files changed since a
   git ref (merge-base `<ref>...HEAD`); whole-package and `pubspec.yaml`
   findings are always kept, and a non-git tree or bad ref exits `64` with a

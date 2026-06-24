@@ -51,7 +51,7 @@ dallow complexity [path]   # only complexity metrics and health score
 
 | Flag | Description | Default |
 | --- | --- | --- |
-| `-f, --format` | `console`, `json`, or `markdown` | `console` |
+| `-f, --format` | `console`, `json`, `markdown`, or `sarif` (see [SARIF output](#sarif-output)) | `console` |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
 | `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
 | `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `20` |
@@ -164,6 +164,38 @@ it silenced was fixed — is silently ignored by default. Pass
 finding so stale directives can be cleaned up (they gate only under
 `--fail-on info`).
 
+## SARIF output
+
+`--format sarif` emits a [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) log
+— the standard interchange format for static-analysis results — so dallow's
+findings can be uploaded to a code-scanning platform (GitHub Advanced Security,
+Azure DevOps, …) and rendered as inline annotations on a pull request.
+
+```sh
+dallow analyze . --format sarif > dallow.sarif
+```
+
+The log contains a single `run`. Its `tool.driver` advertises **one rule per
+check kind** (`dead-code`, `unused-dependency`, `circular-import`, …), each with
+a `shortDescription` and a `defaultConfiguration.level` mapped from the check's
+severity (`error` → `error`, `warning` → `warning`, `info` → `note`). Each
+finding becomes one `result`, with `ruleId` set to its check kind, the same
+mapped `level`, the finding message, and — when the finding is tied to a source
+line — a `physicalLocation` carrying a relative POSIX `artifactLocation.uri` and
+a `region.startLine`. Whole-package and `pubspec.yaml`-level findings have no
+single source line, so they are emitted as valid results **without** a
+`physicalLocation` rather than being dropped.
+
+In a GitHub Actions workflow, upload the file with
+[`github/codeql-action/upload-sarif`](https://github.com/github/codeql-action):
+
+```yaml
+- run: dallow analyze . --format sarif > dallow.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: dallow.sarif
+```
+
 ## How it works
 
 1. The package is resolved with the `analyzer`'s `AnalysisContextCollection`,
@@ -195,7 +227,6 @@ finding so stale directives can be cleaned up (they gate only under
 - Architecture boundary rules (layered / feature-first presets).
 - Barrel-cycle collapsing: name the barrel that induces a mega-cycle instead of
   listing every member (today `--max-cycle-size` filters it out).
-- SARIF output for code-scanning platforms.
 
 ## License
 

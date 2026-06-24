@@ -1,9 +1,10 @@
 import 'dart:convert';
 
 import 'package:dallow/src/finding.dart';
+import 'package:dallow/src/report/sarif_reporter.dart';
 
 /// The rendering format for a run's [Finding] list.
-enum ReportFormat { console, json, markdown }
+enum ReportFormat { console, json, markdown, sarif }
 
 /// Renders findings in the requested [ReportFormat].
 abstract class Reporter {
@@ -15,6 +16,8 @@ abstract class Reporter {
         return const _JsonReporter();
       case ReportFormat.markdown:
         return const _MarkdownReporter();
+      case ReportFormat.sarif:
+        return const SarifReporter();
     }
   }
 
