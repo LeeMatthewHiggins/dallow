@@ -1,6 +1,7 @@
 import 'package:dallow/src/checks/circular_import_check.dart';
 import 'package:dallow/src/checks/dead_code_check.dart';
 import 'package:dallow/src/checks/dependency_check.dart';
+import 'package:dallow/src/checks/duplication_check.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/graph/code_graph.dart';
 
@@ -8,9 +9,11 @@ import 'package:dallow/src/graph/code_graph.dart';
 enum Check {
   deadCode,
   dependencies,
-  circularImports;
+  circularImports,
+  duplication;
 
-  bool get needsGraph => this != Check.dependencies;
+  bool get needsGraph =>
+      this == Check.deadCode || this == Check.circularImports;
 }
 
 /// Runs the requested [checks] against the package rooted at [rootPath] and
@@ -22,8 +25,10 @@ Future<List<Finding>> analyze(
     Check.deadCode,
     Check.dependencies,
     Check.circularImports,
+    Check.duplication,
   },
   int? maxCycleSize,
+  int? minBlockSize,
 }) async {
   final findings = <Finding>[];
 
@@ -41,6 +46,11 @@ Future<List<Finding>> analyze(
 
   if (checks.contains(Check.dependencies)) {
     findings.addAll(const DependencyCheck().run(rootPath));
+  }
+  if (checks.contains(Check.duplication)) {
+    findings.addAll(
+      const DuplicationCheck().run(rootPath, minBlockSize: minBlockSize),
+    );
   }
 
   return findings;

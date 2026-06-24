@@ -12,6 +12,8 @@
   findings. Baseline entries are matched by a line-independent fingerprint
   (kind + file + symbol + normalised message), so they survive line shifts. The
   filters compose and apply to every subcommand.
+- Duplication: added a token-level duplicate-code check, `duplication`
+  subcommand, `analyze` wiring, and `--min-block-size` threshold.
 - Dead code: register Dart 3 `extension type` declarations, so a dead one is
   flagged (labelled "extension type") instead of silently skipped.
 - Circular imports: `--max-cycle-size` now rejects values below the smallest
