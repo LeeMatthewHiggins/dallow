@@ -3,7 +3,8 @@
 **Codebase intelligence for Dart and Flutter.** A fast, zero-config CLI that
 finds the structural rot `dart analyze` leaves behind: dead code that no
 entrypoint can reach, dependency drift in `pubspec.yaml`, circular imports, and
-duplicated code blocks.
+duplicated code blocks, plus complexity hot spots and an aggregate project
+health score.
 
 dallow is a Dart-native take on the ideas behind
 [fallow](https://github.com/fallow-rs/fallow) (codebase intelligence for
@@ -19,6 +20,7 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 | **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
 | **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. |
+| **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits an info-level project health score. |
 
 ## Install
 
@@ -42,6 +44,7 @@ dallow dead-code [path]    # only reachability-based dead code
 dallow deps [path]         # only dependency hygiene
 dallow circular [path]     # only circular imports
 dallow duplication [path]  # only duplicated token blocks
+dallow complexity [path]   # only complexity metrics and health score
 ```
 
 ### Options
@@ -52,12 +55,13 @@ dallow duplication [path]  # only duplicated token blocks
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
 | `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
 | `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `20` |
+| `--max-complexity` | Maximum cyclomatic complexity before a function is reported by `complexity` and `analyze` | `10` |
 | `--changed-since <ref>` | Only report findings in files changed since a git ref (the merge-base of `<ref>...HEAD`) — see [PR gate](#pr-gate) | off |
 | `--baseline <file>` | Suppress findings recorded in a baseline file, so the gate fails only on findings introduced after it was written | off |
 | `--write-baseline <file>` | Write the current findings to `<file>` as a baseline and exit `0`, instead of gating | off |
 
 These options apply to every subcommand (`analyze`, `dead-code`, `deps`,
-`circular`).
+`circular`, `duplication`, `complexity`).
 
 ### Exit codes
 
@@ -139,11 +143,17 @@ aren't already baselined.
    cycles.
 5. Dart source files are tokenised with the analyzer scanner, normalised, and
    compared with a suffix array to find repeated token blocks.
+6. Function-like bodies already available in the resolved AST are walked for
+   cyclomatic complexity. The health score is:
+   `clamp(0, 100, 100 - complexityPenalty - findingsPenalty)`, where
+   `complexityPenalty = min(60, round(sum(max(0, complexity - maxComplexity)) / functionCount * 3))`
+   and `findingsPenalty = min(40, round((2 * errors + warnings + 0.25 * info) / max(functionCount, 1) * 5))`
+   across the other enabled checks. Complexity and health findings themselves
+   are excluded from the findings-density penalty.
 
 ## Roadmap
 
 - Architecture boundary rules (layered / feature-first presets).
-- Complexity metrics and a project health score.
 - Barrel-cycle collapsing: name the barrel that induces a mega-cycle instead of
   listing every member (today `--max-cycle-size` filters it out).
 - SARIF output for code-scanning platforms.

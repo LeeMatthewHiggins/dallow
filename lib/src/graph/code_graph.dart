@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:path/path.dart' as p;
@@ -125,6 +126,22 @@ class CodeNode {
   final Set<CodeNode> references = {};
 }
 
+/// A function-like body whose cyclomatic complexity can be measured without
+/// re-parsing source files outside [CodeGraph.build].
+class FunctionComplexity {
+  const FunctionComplexity({
+    required this.symbol,
+    required this.relativePath,
+    required this.line,
+    required this.complexity,
+  });
+
+  final String symbol;
+  final String relativePath;
+  final int line;
+  final int complexity;
+}
+
 /// The resolved symbol graph for a single package, plus the file-level import
 /// graph used for circular-dependency detection.
 class CodeGraph {
@@ -142,11 +159,15 @@ class CodeGraph {
   final Map<String, Set<String>> imports = {};
 
   final Set<CodeNode> _exportedApi = {};
+  final List<FunctionComplexity> _functions = [];
 
   Iterable<CodeNode> get nodes => _nodes.values;
 
   /// All registered class members (methods, getters, setters, fields).
   Iterable<CodeNode> get memberNodes => _memberNodes.values;
+
+  /// Function, method, constructor, and closure complexity measurements.
+  Iterable<FunctionComplexity> get functions => _functions;
 
   /// Nodes that form the package's public API surface, including symbols
   /// surfaced from `lib/src/` through a re-`export` from a public library.
@@ -194,7 +215,8 @@ class CodeGraph {
       graph
         .._registerReferences(unit)
         .._registerImports(unit)
-        .._registerExportedApi(unit);
+        .._registerExportedApi(unit)
+        .._registerComplexity(unit);
     }
 
     return graph;
@@ -309,6 +331,10 @@ class CodeGraph {
 
   void _registerReferences(ResolvedUnitResult result) {
     result.unit.accept(_ReferenceVisitor(this));
+  }
+
+  void _registerComplexity(ResolvedUnitResult result) {
+    result.unit.accept(_ComplexityCollector(this, result));
   }
 
   void _registerImports(ResolvedUnitResult result) {
@@ -520,5 +546,174 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
       if (target == null || identical(from, target)) continue;
       from.references.add(target);
     }
+  }
+}
+
+class _ComplexityCollector extends RecursiveAstVisitor<void> {
+  _ComplexityCollector(this._graph, this._result);
+
+  final CodeGraph _graph;
+  final ResolvedUnitResult _result;
+
+  @override
+  void visitFunctionDeclaration(FunctionDeclaration node) {
+    _record(node.name.lexeme, node.functionExpression.body);
+    node.functionExpression.body.accept(this);
+  }
+
+  @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    final owner = _enclosingTypeName(node);
+    final name =
+        owner == null ? node.name.lexeme : '$owner.${node.name.lexeme}';
+    _record(name, node.body);
+    node.body.accept(this);
+  }
+
+  @override
+  void visitConstructorDeclaration(ConstructorDeclaration node) {
+    final owner = _enclosingTypeName(node) ?? '<constructor>';
+    final suffix = node.name == null ? '' : '.${node.name!.lexeme}';
+    _record('$owner$suffix', node.body);
+    node.body.accept(this);
+  }
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {
+    if (node.parent is FunctionDeclaration) return;
+    final line = _result.lineInfo.getLocation(node.offset).lineNumber;
+    _record('${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
+        node.body);
+    node.body.accept(this);
+  }
+
+  void _record(String symbol, FunctionBody body) {
+    _graph._functions.add(
+      FunctionComplexity(
+        symbol: symbol,
+        relativePath: p.relative(_result.path, from: _graph.rootPath),
+        line: _result.lineInfo.getLocation(body.parent!.offset).lineNumber,
+        complexity: _ComplexityCounter.count(body),
+      ),
+    );
+  }
+
+  String? _enclosingTypeName(AstNode node) {
+    var current = node.parent;
+    while (current != null) {
+      if (current is ClassDeclaration) return current.name.lexeme;
+      if (current is MixinDeclaration) return current.name.lexeme;
+      if (current is EnumDeclaration) return current.name.lexeme;
+      if (current is ExtensionDeclaration) {
+        return current.name?.lexeme ?? '<extension>';
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  String? _enclosingCallableName(AstNode node) {
+    var current = node.parent;
+    while (current != null) {
+      if (current is FunctionDeclaration) return current.name.lexeme;
+      if (current is MethodDeclaration) {
+        final owner = _enclosingTypeName(current);
+        return owner == null
+            ? current.name.lexeme
+            : '$owner.${current.name.lexeme}';
+      }
+      if (current is ConstructorDeclaration) {
+        final owner = _enclosingTypeName(current);
+        if (owner == null) return null;
+        final suffix = current.name == null ? '' : '.${current.name!.lexeme}';
+        return '$owner$suffix';
+      }
+      if (current is VariableDeclaration) return current.name.lexeme;
+      current = current.parent;
+    }
+    return null;
+  }
+}
+
+class _ComplexityCounter extends RecursiveAstVisitor<void> {
+  _ComplexityCounter();
+
+  int complexity = 1;
+
+  static int count(FunctionBody body) {
+    final counter = _ComplexityCounter();
+    body.accept(counter);
+    return counter.complexity;
+  }
+
+  @override
+  void visitFunctionDeclaration(FunctionDeclaration node) {}
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {}
+
+  @override
+  void visitIfStatement(IfStatement node) {
+    complexity++;
+    super.visitIfStatement(node);
+  }
+
+  @override
+  void visitForStatement(ForStatement node) {
+    complexity++;
+    super.visitForStatement(node);
+  }
+
+  @override
+  void visitForElement(ForElement node) {
+    complexity++;
+    super.visitForElement(node);
+  }
+
+  @override
+  void visitWhileStatement(WhileStatement node) {
+    complexity++;
+    super.visitWhileStatement(node);
+  }
+
+  @override
+  void visitDoStatement(DoStatement node) {
+    complexity++;
+    super.visitDoStatement(node);
+  }
+
+  @override
+  void visitSwitchCase(SwitchCase node) {
+    complexity++;
+    super.visitSwitchCase(node);
+  }
+
+  @override
+  void visitSwitchPatternCase(SwitchPatternCase node) {
+    complexity++;
+    super.visitSwitchPatternCase(node);
+  }
+
+  @override
+  void visitCatchClause(CatchClause node) {
+    complexity++;
+    super.visitCatchClause(node);
+  }
+
+  @override
+  void visitConditionalExpression(ConditionalExpression node) {
+    complexity++;
+    super.visitConditionalExpression(node);
+  }
+
+  @override
+  void visitBinaryExpression(BinaryExpression node) {
+    final type = node.operator.type;
+    if (type == TokenType.AMPERSAND_AMPERSAND ||
+        type == TokenType.BAR_BAR ||
+        type == TokenType.QUESTION_QUESTION) {
+      complexity++;
+    }
+    super.visitBinaryExpression(node);
   }
 }

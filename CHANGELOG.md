@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Complexity: added a resolved-AST cyclomatic-complexity check for functions,
+  methods, constructors, and closures, plus a `complexity` subcommand and
+  `--max-complexity` threshold. Findings above the threshold are warnings;
+  findings at least twice the threshold are errors.
+- Health score: `analyze`/`complexity` now emit an info-level project-health
+  finding with a deterministic 0–100 score derived from complexity excess and
+  non-complexity finding density.
 - PR gate: `--changed-since <ref>` filters findings to files changed since a
   git ref (merge-base `<ref>...HEAD`); whole-package and `pubspec.yaml`
   findings are always kept, and a non-git tree or bad ref exits `64` with a

@@ -13,7 +13,8 @@ Future<void> main(List<String> args) async {
     ..addCommand(_DeadCodeCommand())
     ..addCommand(_DepsCommand())
     ..addCommand(_CircularCommand())
-    ..addCommand(_DuplicationCommand());
+    ..addCommand(_DuplicationCommand())
+    ..addCommand(_ComplexityCommand());
 
   try {
     final code = await runner.run(args) ?? 0;
@@ -68,6 +69,11 @@ abstract class _CheckCommand extends Command<int> {
         'min-block-size',
         help: 'Minimum duplicate token block size. Defaults to '
             '$defaultDuplicateBlockSize.',
+      )
+      ..addOption(
+        'max-complexity',
+        help: 'Maximum cyclomatic complexity before a function is reported. '
+            'Defaults to $defaultMaxComplexity.',
       );
   }
 
@@ -111,6 +117,19 @@ abstract class _CheckCommand extends Command<int> {
       );
       return 64;
     }
+    final maxComplexityRaw = argResults!['max-complexity'] as String?;
+    final maxComplexity =
+        maxComplexityRaw == null ? null : int.tryParse(maxComplexityRaw);
+    if (maxComplexityRaw != null && maxComplexity == null) {
+      stderr.writeln('--max-complexity must be an integer: $maxComplexityRaw');
+      return 64;
+    }
+    if (maxComplexity != null && maxComplexity < minComplexityThreshold) {
+      stderr.writeln(
+        '--max-complexity must be at least $minComplexityThreshold.',
+      );
+      return 64;
+    }
 
     final List<Finding> findings;
     try {
@@ -119,6 +138,7 @@ abstract class _CheckCommand extends Command<int> {
         checks: checks,
         maxCycleSize: maxCycleSize,
         minBlockSize: minBlockSize,
+        maxComplexity: maxComplexity,
       );
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
@@ -228,4 +248,15 @@ class _DuplicationCommand extends _CheckCommand {
 
   @override
   Set<Check> get checks => {Check.duplication};
+}
+
+class _ComplexityCommand extends _CheckCommand {
+  @override
+  String get name => 'complexity';
+
+  @override
+  String get description => 'Measure cyclomatic complexity and project health.';
+
+  @override
+  Set<Check> get checks => {Check.complexity};
 }

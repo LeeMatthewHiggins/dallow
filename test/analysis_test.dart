@@ -242,6 +242,71 @@ void main() {
     });
   });
 
+  group('complexity check', () {
+    final complexityFixture = p.absolute('test', 'fixtures', 'complexity');
+
+    test('reports functions above the complexity threshold', () async {
+      final findings = await analyze(
+        complexityFixture,
+        checks: {Check.complexity},
+        maxComplexity: 4,
+      );
+
+      final complexityFindings =
+          findings.where((f) => f.kind == CheckKind.highComplexity).toList();
+      expect(complexityFindings, hasLength(1));
+
+      final finding = complexityFindings.single;
+      expect(finding.severity, Severity.warning);
+      expect(finding.file, 'lib/complexity.dart');
+      expect(finding.line, 1);
+      expect(finding.symbol, 'complexDecision');
+      expect(finding.message, contains('complexity 6'));
+      expect(finding.message, contains('maximum is 4'));
+    });
+
+    test('does not report functions at the threshold boundary', () async {
+      final findings = await analyze(
+        complexityFixture,
+        checks: {Check.complexity},
+        maxComplexity: 6,
+      );
+
+      expect(
+        findings.where((f) => f.kind == CheckKind.highComplexity),
+        isEmpty,
+      );
+    });
+
+    test('does not report trivial functions as complex', () async {
+      final findings = await analyze(
+        p.join(complexityFixture, 'lib', 'trivial.dart'),
+        checks: {Check.complexity},
+        maxComplexity: 1,
+      );
+
+      expect(
+        findings.where((f) => f.kind == CheckKind.highComplexity),
+        isEmpty,
+      );
+    });
+
+    test('pins the project health score formula', () async {
+      final findings = await analyze(
+        complexityFixture,
+        checks: {Check.complexity},
+        maxComplexity: 4,
+      );
+
+      final health = findings.singleWhere(
+        (f) => f.kind == CheckKind.projectHealth,
+      );
+      expect(health.severity, Severity.info);
+      expect(health.message, contains('Project health score: 97/100'));
+      expect(health.message, contains('2 function(s) analysed'));
+    });
+  });
+
   group('exit-code gate', () {
     const error = Finding(
       kind: CheckKind.missingDependency,
