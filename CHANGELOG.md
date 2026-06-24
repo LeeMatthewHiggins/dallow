@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- PR gate: inline `dallow-ignore` suppression. A `// dallow-ignore` comment on a
+  finding's line — or the line directly above it — removes that finding before
+  the gate, so it neither prints nor affects the exit code. Scope it to one
+  check with `// dallow-ignore: <check-kind>` (a comma-separated list, plus an
+  optional trailing reason). Comments are read from the analyzer's token stream
+  rather than by scanning text, and suppression composes with `--changed-since`
+  and `--baseline` (applied first, against the raw findings).
+  `--report-unused-ignores` surfaces stale directives that matched nothing as
+  info-level `unused-ignore` findings.
 - PR gate: `--changed-since <ref>` filters findings to files changed since a
   git ref (merge-base `<ref>...HEAD`); whole-package and `pubspec.yaml`
   findings are always kept, and a non-git tree or bad ref exits `64` with a

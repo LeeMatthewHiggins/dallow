@@ -68,6 +68,13 @@ abstract class _CheckCommand extends Command<int> {
         'min-block-size',
         help: 'Minimum duplicate token block size. Defaults to '
             '$defaultDuplicateBlockSize.',
+      )
+      ..addFlag(
+        'report-unused-ignores',
+        negatable: false,
+        help: 'Emit an info-level unused-ignore finding for every '
+            "'dallow-ignore' comment that suppressed nothing (a stale "
+            'directive). Off by default to keep output quiet.',
       );
   }
 
@@ -151,10 +158,17 @@ abstract class _CheckCommand extends Command<int> {
     return exitCodeFor(gated, failOn: failOn);
   }
 
-  /// Applies the PR-gate filters — `--changed-since` then `--baseline` — in
-  /// sequence. Both are pure keep/drop predicates, so the order is immaterial.
+  /// Applies the PR-gate filters — inline `dallow-ignore` suppression, then
+  /// `--changed-since`, then `--baseline` — in sequence. All are pure keep/drop
+  /// predicates, so the survivor set is order-independent; suppression runs
+  /// *first*, against the raw findings, so an unused-ignore report reflects
+  /// directives that genuinely matched nothing rather than ones whose finding a
+  /// later filter had already dropped.
   Future<List<Finding>> _applyGate(List<Finding> findings, String root) async {
     final filters = <FindingFilter>[];
+
+    final suppressions = const SuppressionScanner().scan(root);
+    filters.add(suppressions.apply);
 
     final changedSince = argResults!['changed-since'] as String?;
     if (changedSince != null) {
@@ -171,7 +185,11 @@ abstract class _CheckCommand extends Command<int> {
       filters.add(baselineFilter(Baseline.parse(file.readAsStringSync())));
     }
 
-    return applyFilters(findings, filters);
+    final gated = applyFilters(findings, filters);
+    if (argResults!['report-unused-ignores'] as bool) {
+      return [...gated, ...suppressions.unusedFindings];
+    }
+    return gated;
   }
 }
 
