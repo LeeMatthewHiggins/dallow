@@ -17,6 +17,11 @@ String get _viaGetter => used();
 String get exposedViaGetter => _viaGetter;
 
 String runSample() {
-  final items = [used(), p.basename('a/b'), describeService(), '${makeCircle()}'];
+  final items = [
+    used(),
+    p.basename('a/b'),
+    describeService(),
+    '${makeCircle()}'
+  ];
   return items.firstOrNull ?? '';
 }
