@@ -14,7 +14,7 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 
 | Check | What it finds |
 | --- | --- |
-| **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol is never flagged as dead. |
+| **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) **and class members** (methods, getters/setters, fields) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol, or a public member of a public-API class, is never flagged as dead. Members reached through inheritance (an `@override`, an interface implementation, or a member overridden by a subtype) are kept, since they may be dispatched dynamically; a field initialised through a `this.x` constructor parameter counts as used. |
 | **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
 
@@ -68,17 +68,19 @@ dallow analyze . --fail-on warning
 
 1. The package is resolved with the `analyzer`'s `AnalysisContextCollection`,
    giving a fully type-resolved element model.
-2. Every top-level declaration becomes a node; resolved references between them
-   become edges (synthetic accessors are unwrapped to their backing variable).
+2. Every top-level declaration *and class member* becomes a node; resolved
+   references between them become edges (synthetic accessors are unwrapped to
+   their backing field).
 3. Entrypoints seed a reachability walk over that graph — anything unreached and
-   not part of the public API is a dead-code candidate.
+   not part of the public API is a dead-code candidate. Members reachable
+   through inheritance (overrides, interface members) are kept as roots so
+   dynamically-dispatched code is never false-flagged.
 4. `pubspec.yaml` is cross-referenced against the `package:` imports actually
    present in the source tree, and the file-level import graph is scanned for
    cycles.
 
 ## Roadmap
 
-- Class-member-level dead code (unused methods and fields).
 - Duplication detection (suffix-array over the token stream).
 - Architecture boundary rules (layered / feature-first presets).
 - Complexity metrics and a project health score.

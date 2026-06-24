@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Dead code: now reports **unused class members** (methods, getters/setters,
+  fields), not just top-level symbols, on the resolved element graph. A member
+  is flagged when it is private (or belongs to a non-public-API `lib/src`
+  class) and unreachable from any entrypoint. Members reached through
+  inheritance — an `@override`, an interface implementation, or a member
+  overridden by a subtype — are kept (they may be dispatched dynamically), as
+  are public members of public-API classes and fields initialised through a
+  `this.x` constructor parameter. Member findings carry a qualified
+  `EnclosingType.member` symbol.
 - Dead code: register Dart 3 `extension type` declarations, so a dead one is
   flagged (labelled "extension type") instead of silently skipped.
 - Circular imports: `--max-cycle-size` now rejects values below the smallest

@@ -50,6 +50,74 @@ void main() {
     });
   });
 
+  group('member-level dead-code', () {
+    late List<Finding> findings;
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      findings = await analyze(fixture, checks: {Check.deadCode});
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('flags an unused private method of a public class', () {
+      const symbol = 'ExportedWidget._unusedInternal';
+      expect(symbols, contains(symbol));
+      final dead = findings.firstWhere((f) => f.symbol == symbol);
+      expect(dead.message, contains('method'));
+    });
+
+    test('flags an unused private method of an internal class', () {
+      expect(symbols, contains('InternalService._unusedHelper'));
+    });
+
+    test('flags an unused public method of an internal (lib/src) class', () {
+      expect(symbols, contains('InternalService.unusedPublicOnInternal'));
+    });
+
+    test('does not flag a used private method', () {
+      expect(symbols, isNot(contains('InternalService._multiply')));
+      expect(symbols, isNot(contains('ExportedWidget._decorate')));
+    });
+
+    test('does not flag a private field read internally', () {
+      expect(symbols, isNot(contains('InternalService._seed')));
+      expect(symbols, isNot(contains('ExportedWidget._suffix')));
+      expect(symbols, isNot(contains('_Circle.radius')));
+    });
+
+    test('does not flag a public member of a public-API class', () {
+      // `describe` is never called internally, but it is a public member of a
+      // re-exported class, so it is part of the API surface.
+      expect(symbols, isNot(contains('ExportedWidget.describe')));
+      expect(symbols, isNot(contains('ExportedWidget.render')));
+    });
+
+    test('does not flag an @override member never called directly', () {
+      // `_Circle.area` overrides `_Shape.area`; it may be dispatched through
+      // the supertype, so neither the override nor the overridden member is
+      // flagged.
+      expect(symbols, isNot(contains('_Circle.area')));
+      expect(symbols, isNot(contains('_Shape.area')));
+    });
+
+    test('does not flag a used public method of an internal class', () {
+      expect(symbols, isNot(contains('InternalService.compute')));
+    });
+
+    test('does not flag a field initialised only via a this.x constructor', () {
+      expect(symbols, isNot(contains('CtorOnlyField.label')));
+    });
+
+    test('does not redundantly report members of an already-dead type', () {
+      // The enclosing class is itself reported dead, so listing its members
+      // too would be noise.
+      expect(symbols, contains('_DeadClass'));
+      expect(symbols, isNot(contains('_DeadClass.orphanMethod')));
+      // The representation field of a dead extension type is also not listed.
+      expect(symbols, isNot(contains('DeadId.value')));
+    });
+  });
+
   group('dependency check', () {
     late List<Finding> findings;
 
