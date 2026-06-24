@@ -74,7 +74,8 @@ String _realpath(String path) {
   }
 }
 
-/// A declared top-level symbol in the analysed package.
+/// A declared symbol in the analysed package — either a top-level declaration
+/// or, when [isMember] is true, a class/mixin/enum/extension member.
 class CodeNode {
   CodeNode({
     required this.element,
@@ -86,6 +87,9 @@ class CodeNode {
     required this.isUnderLibSrc,
     required this.isConsumerFile,
     required this.isPublicApi,
+    this.isMember = false,
+    this.owner,
+    this.enclosingName,
   });
 
   final Element element;
@@ -103,8 +107,20 @@ class CodeNode {
   final bool isConsumerFile;
 
   /// A public symbol declared directly under `lib/`, forming the package's
-  /// exported API surface.
+  /// exported API surface. Always false for members (a member's API status is
+  /// derived from its [owner]).
   final bool isPublicApi;
+
+  /// True when this node is a class member (method, getter, setter or field)
+  /// rather than a top-level declaration.
+  final bool isMember;
+
+  /// The top-level node enclosing this member, or null for a top-level node.
+  final CodeNode? owner;
+
+  /// The simple name of the enclosing type, for member findings (e.g. `Foo`
+  /// in `Foo.bar`).
+  final String? enclosingName;
 
   final Set<CodeNode> references = {};
 }
@@ -118,6 +134,9 @@ class CodeGraph {
 
   final Map<Element, CodeNode> _nodes = {};
 
+  /// Class/mixin/enum/extension members, keyed by their declaring element.
+  final Map<Element, CodeNode> _memberNodes = {};
+
   /// File-level import edges, keyed by absolute path, restricted to files
   /// inside the analysed package.
   final Map<String, Set<String>> imports = {};
@@ -125,6 +144,9 @@ class CodeGraph {
   final Set<CodeNode> _exportedApi = {};
 
   Iterable<CodeNode> get nodes => _nodes.values;
+
+  /// All registered class members (methods, getters, setters, fields).
+  Iterable<CodeNode> get memberNodes => _memberNodes.values;
 
   /// Nodes that form the package's public API surface, including symbols
   /// surfaced from `lib/src/` through a re-`export` from a public library.
@@ -209,7 +231,7 @@ class CodeGraph {
       if (result.path != element.source?.fullName) continue;
 
       final isPrivate = name.startsWith('_');
-      _nodes[element] = CodeNode(
+      final node = CodeNode(
         element: element,
         name: name,
         absolutePath: result.path,
@@ -219,6 +241,68 @@ class CodeGraph {
         isUnderLibSrc: isUnderLibSrc,
         isConsumerFile: isConsumerFile,
         isPublicApi: isUnderLib && !isUnderLibSrc && !isPrivate,
+      );
+      _nodes[element] = node;
+
+      // Register the members of types so dead-code analysis can reach below the
+      // top-level granularity (unused methods/fields). Functions, typedefs and
+      // variables have no members.
+      if (element is InstanceElement) {
+        _registerMembers(
+          node,
+          element,
+          result,
+          relativePath: relativePath,
+          isUnderLibSrc: isUnderLibSrc,
+          isConsumerFile: isConsumerFile,
+        );
+      }
+    }
+  }
+
+  /// Registers the declared members (methods, explicit getters/setters and
+  /// fields) of [type] as member nodes owned by [owner]. Synthetic members,
+  /// constructors and enum constants are skipped: they are either implicit or
+  /// reached through their type rather than as standalone dead candidates.
+  void _registerMembers(
+    CodeNode owner,
+    InstanceElement type,
+    ResolvedUnitResult result, {
+    required String relativePath,
+    required bool isUnderLibSrc,
+    required bool isConsumerFile,
+  }) {
+    // The representation field of an `extension type` is implicit to the type
+    // and always "used"; never report it as a standalone dead field.
+    final representation =
+        type is ExtensionTypeElement ? type.representation : null;
+    final members = <Element>[
+      ...type.methods,
+      ...type.fields.where(
+        (f) => !f.isSynthetic && !f.isEnumConstant && f != representation,
+      ),
+      ...type.accessors.where((a) => !a.isSynthetic),
+    ];
+
+    for (final element in members) {
+      final name = element.name;
+      if (name == null || name.isEmpty) continue;
+      if (element.isSynthetic) continue;
+      if (result.path != element.source?.fullName) continue;
+
+      _memberNodes[element] = CodeNode(
+        element: element,
+        name: name,
+        absolutePath: result.path,
+        relativePath: relativePath,
+        line: _lineOf(result, element.nameOffset),
+        isPrivate: name.startsWith('_'),
+        isUnderLibSrc: isUnderLibSrc,
+        isConsumerFile: isConsumerFile,
+        isPublicApi: false,
+        isMember: true,
+        owner: owner,
+        enclosingName: type.name,
       );
     }
   }
@@ -241,6 +325,19 @@ class CodeGraph {
         edges.add(resolved);
       }
     }
+  }
+
+  /// Maps a referenced [element] to its member node, or null when it is not a
+  /// registered member. A synthetic property accessor (the implicit getter or
+  /// setter of a field) is unwrapped to its backing field, so reading or
+  /// writing a field resolves to the field's node.
+  CodeNode? memberNodeOf(Element? element) {
+    var current = element;
+    if (current is PropertyAccessorElement && current.isSynthetic) {
+      current = current.variable2;
+    }
+    if (current == null) return null;
+    return _memberNodes[current];
   }
 
   /// Maps an arbitrary referenced [element] back to the top-level [CodeNode]
@@ -300,7 +397,9 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   CodeNode? _current;
 
   void _withOwner(Element? owner, void Function() body) {
-    final node = _graph.ownerOf(owner);
+    // Prefer the most specific (member) node so references made inside a member
+    // body are attributed to that member, not just its enclosing type.
+    final node = _graph.memberNodeOf(owner) ?? _graph.ownerOf(owner);
     final previous = _current;
     if (node != null) _current = node;
     body();
@@ -349,6 +448,43 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   }
 
   @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    // Covers methods, operators and explicit getters/setters.
+    _withOwner(node.declaredElement, () => super.visitMethodDeclaration(node));
+  }
+
+  @override
+  void visitFieldDeclaration(FieldDeclaration node) {
+    final variables = node.fields.variables;
+    final first = variables.isEmpty ? null : variables.first.declaredElement;
+    _withOwner(first, () => node.fields.type?.accept(this));
+    for (final variable in variables) {
+      _withOwner(variable.declaredElement, () => variable.accept(this));
+    }
+  }
+
+  @override
+  void visitFieldFormalParameter(FieldFormalParameter node) {
+    // `MyClass(this.x)` initialises field `x`; treat it as a use so a field
+    // only ever set through a constructor is not reported as dead.
+    final element = node.declaredElement;
+    if (element is FieldFormalParameterElement) _record(element.field);
+    super.visitFieldFormalParameter(node);
+  }
+
+  @override
+  void visitSuperFormalParameter(SuperFormalParameter node) {
+    // `MyClass(super.x)` forwards to a superclass field formal; keep that
+    // field alive too.
+    final element = node.declaredElement;
+    if (element is SuperFormalParameterElement) {
+      final forwarded = element.superConstructorParameter;
+      if (forwarded is FieldFormalParameterElement) _record(forwarded.field);
+    }
+    super.visitSuperFormalParameter(node);
+  }
+
+  @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
     final variables = node.variables.variables;
     final first = variables.isEmpty ? null : variables.first.declaredElement;
@@ -372,10 +508,17 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   void _record(Element? referenced) {
     if (referenced == null) return;
-    final target = _graph.ownerOf(referenced);
-    if (target == null) return;
     final from = _current;
-    if (from == null || identical(from, target)) return;
-    from.references.add(target);
+    if (from == null) return;
+    // Record an edge to both the member node (if the reference resolves to a
+    // member) and the enclosing top-level node, so member-level and top-level
+    // reachability stay independently correct.
+    for (final target in [
+      _graph.memberNodeOf(referenced),
+      _graph.ownerOf(referenced),
+    ]) {
+      if (target == null || identical(from, target)) continue;
+      from.references.add(target);
+    }
   }
 }
