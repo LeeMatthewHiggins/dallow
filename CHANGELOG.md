@@ -50,6 +50,13 @@
   are public members of public-API classes and fields initialised through a
   `this.x` constructor parameter. Member findings carry a qualified
   `EnclosingType.member` symbol.
+- Monorepos: new `-r, --recursive` flag on `analyze` (and every sub-command)
+  discovers and analyses all member packages in one run, instead of the
+  single-package default. Packages are found from a `melos.yaml` `packages:`
+  globs list (honouring `ignore:`), a pub-workspace `workspace:` member list,
+  or, failing both, every nested `pubspec.yaml`; build/tooling/symlink dirs are
+  skipped. Findings are attributed to their package (console/markdown prefix,
+  JSON `package` field) and `--fail-on` is evaluated across all packages.
 - Dead code: register Dart 3 `extension type` declarations, so a dead one is
   flagged (labelled "extension type") instead of silently skipped.
 - Circular imports: `--max-cycle-size` now rejects values below the smallest

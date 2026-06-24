@@ -52,6 +52,7 @@ dallow complexity [path]   # only complexity metrics and health score
 | Flag | Description | Default |
 | --- | --- | --- |
 | `-f, --format` | `console`, `json`, `markdown`, or `sarif` (see [SARIF output](#sarif-output)) | `console` |
+| `-r, --recursive` | Scan **every member package** of a monorepo in one run (see [Monorepos](#monorepos)) | off |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
 | `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
 | `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `20` |
@@ -63,6 +64,32 @@ dallow complexity [path]   # only complexity metrics and health score
 
 These options apply to every subcommand (`analyze`, `dead-code`, `deps`,
 `circular`, `duplication`, `complexity`).
+
+### Monorepos
+
+By default dallow analyses a single package. Pointed at a monorepo root it would
+see only the root and **silently miss** the package-scoped dead-code and
+dependency findings of every member. Pass `-r, --recursive` to discover and
+analyse all member packages in one run:
+
+```sh
+dallow analyze -r .                  # scan the whole workspace
+dallow analyze -r --fail-on warning  # CI gate across every package
+dallow deps -r .                     # any sub-command works recursively too
+```
+
+Member packages are discovered in priority order:
+
+1. a **melos** workspace — `melos.yaml` with `packages:` globs (and an optional
+   `ignore:` list);
+2. a **pub workspace** — a root `pubspec.yaml` with a `workspace:` member list;
+3. otherwise, **every nested `pubspec.yaml`** found by walking the tree.
+
+Build, tooling and symlink directories (`.dart_tool`, `build`, `.symlinks`, …)
+are never treated as packages. Findings are **attributed to their package**: the
+console and markdown reports prefix each finding with its package path, and JSON
+findings carry a `package` field. The exit code honours `--fail-on` evaluated
+**across all packages**.
 
 ### Exit codes
 

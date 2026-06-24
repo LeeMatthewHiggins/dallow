@@ -1,0 +1,11 @@
+name: pub_workspace_root
+description: Pub-workspace root listing its members under `workspace:`.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
+
+workspace:
+  - pkgs/one
+  - pkgs/two

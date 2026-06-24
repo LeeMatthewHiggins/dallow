@@ -34,6 +34,7 @@ class Finding {
     this.file,
     this.line,
     this.symbol,
+    this.package,
   });
 
   final CheckKind kind;
@@ -47,7 +48,25 @@ class Finding {
   /// The named element the finding refers to, when applicable.
   final String? symbol;
 
+  /// The member package this finding belongs to, as a path relative to the
+  /// scanned workspace root (`.` for the root package). Set only in recursive
+  /// (`--recursive`) runs; null for a single-package analysis, keeping that
+  /// output unchanged.
+  final String? package;
+
+  /// Returns a copy of this finding attributed to [package].
+  Finding withPackage(String package) => Finding(
+        kind: kind,
+        severity: severity,
+        message: message,
+        file: file,
+        line: line,
+        symbol: symbol,
+        package: package,
+      );
+
   Map<String, Object?> toJson() => {
+        if (package != null) 'package': package,
         'kind': kind.id,
         'severity': severity.label,
         'message': message,

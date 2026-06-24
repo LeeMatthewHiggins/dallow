@@ -1,0 +1,7 @@
+name: melos_repo
+
+packages:
+  - packages/**
+
+ignore:
+  - packages/ignored

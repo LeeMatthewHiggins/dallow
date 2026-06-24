@@ -1,0 +1,7 @@
+name: alpha
+description: Member package with a dead-code finding.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

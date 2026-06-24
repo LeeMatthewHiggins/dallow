@@ -44,9 +44,10 @@ class _ConsoleReporter implements Reporter {
   }
 
   String _location(Finding finding) {
-    if (finding.file == null) return '';
+    final package = finding.package != null ? '${finding.package}: ' : '';
+    if (finding.file == null) return package;
     final line = finding.line != null ? ':${finding.line}' : '';
-    return '${finding.file}$line  ';
+    return '$package${finding.file}$line  ';
   }
 }
 
@@ -84,7 +85,10 @@ class _MarkdownReporter implements Reporter {
       ..writeln('| --- | --- | --- | --- |');
     for (final finding in findings) {
       final line = finding.line != null ? ':${finding.line}' : '';
-      final location = finding.file != null ? '`${finding.file}$line`' : '';
+      final file = finding.file != null ? '`${finding.file}$line`' : '';
+      final package = finding.package != null ? '`${finding.package}`' : '';
+      final location =
+          [package, file].where((part) => part.isNotEmpty).join(' ');
       buffer.writeln(
         '| ${finding.severity.label} | ${finding.kind.id} | $location | '
         '${finding.message} |',
