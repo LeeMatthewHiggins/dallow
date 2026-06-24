@@ -44,6 +44,24 @@ abstract class _CheckCommand extends Command<int> {
         help: 'Skip dependency cycles with more than this many files. Useful '
             'to ignore a known barrel mega-cycle while still catching small '
             'new cycles.',
+      )
+      ..addOption(
+        'changed-since',
+        help: 'Only report findings in files changed since this git ref '
+            '(merge-base of <ref>...HEAD), e.g. origin/main or a SHA. '
+            'Whole-package findings (no file / pubspec-level) are always '
+            'kept. Requires the package to be inside a git work tree.',
+      )
+      ..addOption(
+        'baseline',
+        help: 'Suppress findings recorded in this JSON baseline file, so the '
+            'gate fails only on findings introduced after it was written.',
+      )
+      ..addOption(
+        'write-baseline',
+        help: 'Write the current findings to this file as a baseline and exit '
+            '0, instead of gating. Run once to adopt the gate on an existing '
+            'codebase.',
       );
   }
 
@@ -83,11 +101,53 @@ abstract class _CheckCommand extends Command<int> {
       return 69;
     }
 
+    // --write-baseline short-circuits the gate: capture all current findings
+    // and exit 0, regardless of --changed-since / --baseline.
+    final writeBaseline = argResults!['write-baseline'] as String?;
+    if (writeBaseline != null) {
+      File(writeBaseline).writeAsStringSync(encodeBaseline(findings));
+      stderr.writeln(
+        'Wrote baseline with ${findings.length} finding(s) to $writeBaseline',
+      );
+      return 0;
+    }
+
+    final List<Finding> gated;
+    try {
+      gated = await _applyGate(findings, root);
+    } on GateException catch (e) {
+      stderr.writeln(e.message);
+      return 64;
+    }
+
     final format = ReportFormat.values.byName(argResults!['format'] as String);
-    stdout.writeln(Reporter(format).render(findings));
+    stdout.writeln(Reporter(format).render(gated));
 
     final failOn = FailOn.values.byName(argResults!['fail-on'] as String);
-    return exitCodeFor(findings, failOn: failOn);
+    return exitCodeFor(gated, failOn: failOn);
+  }
+
+  /// Applies the PR-gate filters — `--changed-since` then `--baseline` — in
+  /// sequence. Both are pure keep/drop predicates, so the order is immaterial.
+  Future<List<Finding>> _applyGate(List<Finding> findings, String root) async {
+    final filters = <FindingFilter>[];
+
+    final changedSince = argResults!['changed-since'] as String?;
+    if (changedSince != null) {
+      final changed = await changedFilesSince(changedSince, packageRoot: root);
+      filters.add(changedSinceFilter(changed));
+    }
+
+    final baselinePath = argResults!['baseline'] as String?;
+    if (baselinePath != null) {
+      final file = File(baselinePath);
+      if (!file.existsSync()) {
+        throw GateException('No such baseline file: $baselinePath');
+      }
+      filters.add(baselineFilter(Baseline.parse(file.readAsStringSync())));
+    }
+
+    return applyFilters(findings, filters);
   }
 }
 

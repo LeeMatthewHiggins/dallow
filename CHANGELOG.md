@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- PR gate: `--changed-since <ref>` filters findings to files changed since a
+  git ref (merge-base `<ref>...HEAD`); whole-package and `pubspec.yaml`
+  findings are always kept, and a non-git tree or bad ref exits `64` with a
+  clear message instead of crashing.
+- PR gate: `--baseline <file>` suppresses findings recorded in a JSON baseline,
+  and `--write-baseline <file>` captures the current findings as one (exit `0`),
+  so a team can adopt the gate on a dirty codebase and fail only on *new*
+  findings. Baseline entries are matched by a line-independent fingerprint
+  (kind + file + symbol + normalised message), so they survive line shifts. The
+  filters compose and apply to every subcommand.
 - Dead code: register Dart 3 `extension type` declarations, so a dead one is
   flagged (labelled "extension type") instead of silently skipped.
 - Circular imports: `--max-cycle-size` now rejects values below the smallest
