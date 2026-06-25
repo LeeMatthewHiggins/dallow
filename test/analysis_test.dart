@@ -354,7 +354,7 @@ void main() {
         (f) => f.kind == CheckKind.projectHealth,
       );
       expect(health.message, contains('Project health score: 97/100'));
-      expect(health.message, contains('23 function(s) analysed'));
+      expect(health.message, contains('24 function(s) analysed'));
       expect(health.message, contains('complexity penalty 0'));
       expect(health.message, contains('findings penalty 3'));
     });
