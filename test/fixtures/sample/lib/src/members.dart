@@ -15,8 +15,12 @@ class InternalService {
   /// Private method, called by [compute] → used → clean.
   int _multiply(int value) => value * 2;
 
-  /// Private method that nobody calls → FLAGGED.
-  int _unusedHelper() => 99;
+  /// Private method that nobody calls → FLAGGED. It is the *only* referencer of
+  /// the top-level [_usedOnlyByDeadMember]; that top-level symbol must still stay
+  /// alive, because top-level reachability is decoupled from member reachability
+  /// (the enclosing — reachable — class records the use, as it did before
+  /// member analysis existed). Regression guard for the F3 follow-up.
+  int _unusedHelper() => _usedOnlyByDeadMember();
 
   /// Public method of an *internal* class that nobody calls → FLAGGED
   /// (public members are reportable when the enclosing type is not public API).
@@ -31,6 +35,13 @@ class CtorOnlyField {
 
   final String label;
 }
+
+/// A top-level (`lib/src`, private) function referenced *only* from the dead
+/// member `InternalService._unusedHelper` (plain text, not a doc link, so this
+/// comment records no edge of its own). It is reportable in principle, but must
+/// not be flagged: the reachable enclosing class records the use, so a dead
+/// member can never demote a top-level symbol.
+int _usedOnlyByDeadMember() => 7;
 
 /// Reachable from the public API (called by `runSample`), so it keeps
 /// [InternalService] and the members it touches alive.
