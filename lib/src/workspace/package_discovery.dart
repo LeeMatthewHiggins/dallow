@@ -171,11 +171,39 @@ List<String> _sortUnique(List<String> paths) {
   return unique;
 }
 
+/// Thrown when a workspace include/ignore glob uses a construct outside the
+/// supported subset (`*`, `**`, `?`, and `{a,b}` brace alternation).
+///
+/// Surfaced loudly — rather than silently treating the unknown construct as a
+/// literal — because a literal that matches nothing would under-scan a monorepo
+/// and produce a falsely-clean report: the exact failure `--recursive` exists
+/// to prevent.
+class UnsupportedGlobException implements Exception {
+  UnsupportedGlobException(this.glob, this.reason);
+
+  /// The offending glob, verbatim from the workspace config.
+  final String glob;
+
+  /// Why it could not be translated (human-readable).
+  final String reason;
+
+  @override
+  String toString() => 'Unsupported workspace glob "$glob": $reason. Supported '
+      'syntax is *, **, ?, and {a,b} brace alternation.';
+}
+
 /// Converts a melos-style glob to an anchored [RegExp]. Supports `*` (any run
-/// of characters except `/`), `**` (any characters, including `/`), and `?`
-/// (a single non-`/` character) — the subset melos package globs use.
+/// of characters except `/`), `**` (any characters, including `/`), `?` (a
+/// single non-`/` character) and `{a,b,c}` brace alternation (expanded to a
+/// `(?:a|b|c)` group) — the subset melos package globs use.
+///
+/// Any other glob metacharacter — a character class (`[`/`]`) or an unbalanced
+/// brace — throws [UnsupportedGlobException]. Translating such a glob to a
+/// literal would let it silently match nothing and under-scan the workspace,
+/// so it is refused rather than dropped.
 RegExp _globToRegExp(String glob) {
   final buffer = StringBuffer('^');
+  var braceDepth = 0;
   for (var i = 0; i < glob.length; i++) {
     final char = glob[i];
     if (char == '*') {
@@ -194,13 +222,32 @@ RegExp _globToRegExp(String glob) {
       }
     } else if (char == '?') {
       buffer.write('[^/]');
-    } else if (r'\^$.|+()[]{}'.contains(char)) {
+    } else if (char == '{') {
+      braceDepth++;
+      buffer.write('(?:');
+    } else if (char == '}') {
+      if (braceDepth == 0) {
+        throw UnsupportedGlobException(glob, 'unbalanced "}"');
+      }
+      braceDepth--;
+      buffer.write(')');
+    } else if (char == ',' && braceDepth > 0) {
+      buffer.write('|');
+    } else if (char == '[' || char == ']') {
+      throw UnsupportedGlobException(
+        glob,
+        'character classes ("[…]") are not supported',
+      );
+    } else if (r'\^$.|+()'.contains(char)) {
       buffer
         ..write(r'\')
         ..write(char);
     } else {
       buffer.write(char);
     }
+  }
+  if (braceDepth != 0) {
+    throw UnsupportedGlobException(glob, 'unbalanced "{"');
   }
   buffer.write(r'$');
   return RegExp(buffer.toString());

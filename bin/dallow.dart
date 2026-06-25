@@ -89,7 +89,9 @@ abstract class _CheckCommand extends Command<int> {
         negatable: false,
         help: 'Scan every member package of a monorepo (melos / pub workspace '
             '/ nested pubspecs) in one run, aggregating the results. Findings '
-            'are attributed to their package.',
+            'are attributed to their package. melos package globs support '
+            '*, **, ?, and {a,b} brace alternation; any other syntax is '
+            'rejected rather than silently matching nothing.',
       );
   }
 
@@ -150,7 +152,12 @@ abstract class _CheckCommand extends Command<int> {
     final recursive = argResults!['recursive'] as bool;
     WorkspaceDiscovery? discovery;
     if (recursive) {
-      discovery = discoverWorkspace(root);
+      try {
+        discovery = discoverWorkspace(root);
+      } on UnsupportedGlobException catch (e) {
+        stderr.writeln(e);
+        return 64;
+      }
       if (discovery.packageRoots.isEmpty) {
         stderr.writeln(
           'No packages found under $root. Looked for melos.yaml packages, a '

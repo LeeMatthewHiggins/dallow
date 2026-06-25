@@ -90,6 +90,7 @@ Future<List<Finding>> analyze(
 /// `workspace:` list, then nested `pubspec.yaml` files). Packages are analysed
 /// in sorted-path order and their findings concatenated, so a single
 /// `exitCodeFor` call over the result honours `--fail-on` across every package.
+///
 /// Pass [discovery] to reuse a [WorkspaceDiscovery] already computed by the
 /// caller (e.g. for an empty-workspace guard), so the filesystem walk runs once
 /// per recursive run rather than twice. When omitted, discovery runs here.

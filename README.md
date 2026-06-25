@@ -85,6 +85,13 @@ Member packages are discovered in priority order:
 2. a **pub workspace** — a root `pubspec.yaml` with a `workspace:` member list;
 3. otherwise, **every nested `pubspec.yaml`** found by walking the tree.
 
+melos `packages:`/`ignore:` globs support `*` (one path segment), `**` (any
+depth), `?` (a single character), and `{a,b}` **brace alternation** — so a
+mixed config like `["packages/**", "{examples,e2e}/**"]` selects all three
+trees. Any other glob syntax (character classes `[…]`, unbalanced braces) is
+**rejected with exit 64** rather than silently matching nothing, so a
+misunderstood glob can never produce a falsely-clean report.
+
 Build, tooling and symlink directories (`.dart_tool`, `build`, `.symlinks`, …)
 are never treated as packages. Findings are **attributed to their package**: the
 console and markdown reports prefix each finding with its package path, and JSON
