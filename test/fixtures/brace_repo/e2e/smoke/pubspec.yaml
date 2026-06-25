@@ -1,5 +1,5 @@
 name: smoke
-description: Brace fixture: matched by {examples,e2e}/** alternation.
+description: "Brace fixture: matched by {examples,e2e}/** alternation."
 version: 0.0.0
 publish_to: none
 

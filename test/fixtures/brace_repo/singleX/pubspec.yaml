@@ -1,5 +1,5 @@
 name: single_x
-description: Brace fixture: matched by **/single? (zero-leading **, ? wildcard).
+description: "Brace fixture: matched by **/single? (zero-leading **, ? wildcard)."
 version: 0.0.0
 publish_to: none
 

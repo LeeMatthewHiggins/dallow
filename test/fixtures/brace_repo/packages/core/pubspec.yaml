@@ -1,5 +1,5 @@
 name: core
-description: Brace fixture: matched by packages/**.
+description: "Brace fixture: matched by packages/**."
 version: 0.0.0
 publish_to: none
 

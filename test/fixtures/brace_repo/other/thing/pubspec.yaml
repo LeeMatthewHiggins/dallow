@@ -1,5 +1,5 @@
 name: unmatched
-description: Brace fixture: matched by no include glob — must be excluded.
+description: "Brace fixture: matched by no include glob — must be excluded."
 version: 0.0.0
 publish_to: none
 

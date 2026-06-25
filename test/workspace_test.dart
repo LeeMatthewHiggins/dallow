@@ -72,6 +72,15 @@ void main() {
     test('excludes a package matched by no include glob', () {
       expect(_relativeRoots(discovery, root), isNot(contains('other/thing')));
     });
+
+    test('analyzes end-to-end without choking on a member pubspec', () async {
+      // Discovery only checks that pubspecs exist; `analyzeWorkspace` parses
+      // their contents. A member pubspec with invalid YAML would surface only
+      // here (not in discovery), so drive the full path to keep the fixtures
+      // honest. A clean run also proves every selected member parsed.
+      final findings = await analyzeWorkspace(root);
+      expect(findings, isEmpty);
+    });
   });
 
   group('unsupported glob handling', () {
