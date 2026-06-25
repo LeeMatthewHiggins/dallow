@@ -510,15 +510,30 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     if (referenced == null) return;
     final from = _current;
     if (from == null) return;
-    // Record an edge to both the member node (if the reference resolves to a
-    // member) and the enclosing top-level node, so member-level and top-level
+
+    final memberTarget = _graph.memberNodeOf(referenced);
+    final topLevelTarget = _graph.ownerOf(referenced);
+
+    // The enclosing scope reaches both the referenced member (if the reference
+    // resolves to one) and its top-level owner, so member-level and top-level
     // reachability stay independently correct.
-    for (final target in [
-      _graph.memberNodeOf(referenced),
-      _graph.ownerOf(referenced),
-    ]) {
-      if (target == null || identical(from, target)) continue;
-      from.references.add(target);
-    }
+    _addEdge(from, memberTarget);
+    _addEdge(from, topLevelTarget);
+
+    // Preserve the pre-member-analysis invariant: a reference made inside a
+    // member body also counts as a *top-level* use by the enclosing type —
+    // exactly as it did when the type was the only recorded scope. This keeps
+    // top-level reachability a true superset of the old behaviour (byte-for-
+    // byte), independent of whether the member itself is reachable, so a
+    // member-level false positive can never demote a top-level symbol. Only the
+    // top-level owner edge is replayed (not the member edge): leaking the
+    // member target through the owner would mask genuinely-dead members
+    // referenced only from other dead members.
+    if (from.isMember) _addEdge(from.owner, topLevelTarget);
+  }
+
+  void _addEdge(CodeNode? from, CodeNode? target) {
+    if (from == null || target == null || identical(from, target)) return;
+    from.references.add(target);
   }
 }

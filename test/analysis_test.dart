@@ -108,6 +108,18 @@ void main() {
       expect(symbols, isNot(contains('CtorOnlyField.label')));
     });
 
+    test('does not flag a top-level symbol used only by a dead member', () {
+      // Regression (F3 follow-up): top-level reachability must stay decoupled
+      // from member reachability. `_unusedHelper` is itself dead and is the
+      // ONLY referencer of the top-level `_usedOnlyByDeadMember`. The enclosing
+      // (reachable) class records the top-level use — exactly as it did before
+      // member analysis existed — so the top-level symbol stays alive. A
+      // member-level false positive must never demote a top-level symbol.
+      expect(symbols, isNot(contains('_usedOnlyByDeadMember')));
+      // The dead member itself is still reported.
+      expect(symbols, contains('InternalService._unusedHelper'));
+    });
+
     test('does not redundantly report members of an already-dead type', () {
       // The enclosing class is itself reported dead, so listing its members
       // too would be noise.
