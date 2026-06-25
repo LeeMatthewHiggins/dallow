@@ -1,0 +1,10 @@
+# Keep the published archive lean and warning-free.
+# The test tree ships synthetic fixture packages that deliberately import
+# undeclared packages (collection, google_maps_flutter, …) to exercise the
+# deps check — pub flags those as "missing dependency" warnings. Tests are
+# never run from the published archive, so exclude the whole tree.
+test/
+
+# Internal build script for the standalone-binary `dw` tool packaging;
+# not needed by package consumers.
+tool/

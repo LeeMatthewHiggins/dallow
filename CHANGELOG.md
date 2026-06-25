@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 - 2026-06-25
+
+- Packaging: add an `example/` (CLI usage walkthrough) and a `.pubignore` that
+  drops the `test/` and `tool/` trees from the published archive — the test
+  fixtures deliberately import undeclared packages to exercise the deps check,
+  which pub flagged as packaging warnings.
+- Metadata: broaden the package description to name the duplication and
+  complexity checks, add pub.dev `topics`, and declare `issue_tracker`.
+
 ## 0.2.0 - 2026-06-25
 
 - Complexity: added a resolved-AST cyclomatic-complexity check for functions,
