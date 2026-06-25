@@ -4,6 +4,8 @@ library;
 
 export 'src/analysis.dart';
 export 'src/checks/circular_import_check.dart' show minCycleSize;
+export 'src/checks/complexity_check.dart'
+    show defaultMaxComplexity, minComplexityThreshold;
 export 'src/checks/duplication_check.dart'
     show defaultDuplicateBlockSize, minDuplicateBlockSize;
 export 'src/finding.dart';

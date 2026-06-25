@@ -5,7 +5,9 @@ enum CheckKind {
   missingDependency('missing-dependency'),
   misplacedDependency('misplaced-dependency'),
   circularImport('circular-import'),
-  duplicateCode('duplicate-code');
+  duplicateCode('duplicate-code'),
+  highComplexity('high-complexity'),
+  projectHealth('project-health');
 
   const CheckKind(this.id);
 
