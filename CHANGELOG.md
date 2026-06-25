@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-06-25
 
 - Complexity: added a resolved-AST cyclomatic-complexity check for functions,
   methods, constructors, and closures, plus a `complexity` subcommand and
