@@ -41,7 +41,9 @@ void main() {
     message: 'Import cycle spanning 3 files.',
   );
 
-  // An error-severity finding, to exercise the level mapping.
+  // An error-severity finding, to exercise the level mapping. It is also a
+  // `pubspec.yaml`-level finding (a file but no line), exercising the
+  // file-without-line location contract.
   const errorLevel = Finding(
     kind: CheckKind.missingDependency,
     severity: Severity.error,
@@ -118,6 +120,18 @@ void main() {
 
     test('error severity maps to the SARIF error level', () {
       expect(obj(theResults([errorLevel]).single)['level'], 'error');
+    });
+
+    test('a pubspec.yaml-level finding (file but no line) carries no locations',
+        () {
+      // GitHub code scanning needs `region.startLine` to place an annotation;
+      // a `physicalLocation` with a file but no region pins to line 1. So a
+      // finding with a file but no line must emit no `locations` at all, with
+      // the file it concerns preserved in the message text instead.
+      final result = obj(theResults([errorLevel]).single);
+      expect(result['ruleId'], CheckKind.missingDependency.id);
+      expect(result.containsKey('locations'), isFalse);
+      expect(obj(result['message'])['text'], contains('pubspec.yaml'));
     });
 
     test('every result ruleId matches a declared rule id', () {

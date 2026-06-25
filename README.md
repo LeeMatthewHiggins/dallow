@@ -182,9 +182,12 @@ severity (`error` → `error`, `warning` → `warning`, `info` → `note`). Each
 finding becomes one `result`, with `ruleId` set to its check kind, the same
 mapped `level`, the finding message, and — when the finding is tied to a source
 line — a `physicalLocation` carrying a relative POSIX `artifactLocation.uri` and
-a `region.startLine`. Whole-package and `pubspec.yaml`-level findings have no
-single source line, so they are emitted as valid results **without** a
-`physicalLocation` rather than being dropped.
+a `region.startLine`. Whole-package signals (no file) and `pubspec.yaml`-level
+dependency findings (a file but no single source line) are emitted as valid
+results **without** a `physicalLocation` rather than being dropped: GitHub
+code-scanning needs `region.startLine` to place an annotation, so a location
+with a file but no region would be pinned to line 1 — these findings name the
+file they concern in the result message instead of inventing that line.
 
 In a GitHub Actions workflow, upload the file with
 [`github/codeql-action/upload-sarif`](https://github.com/github/codeql-action):

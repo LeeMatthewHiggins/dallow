@@ -10,10 +10,17 @@ import 'package:path/path.dart' as p;
 ///
 /// The log contains a single `run` whose `tool.driver` advertises **one rule
 /// per [CheckKind]** (whether or not it fired) so the rule catalogue is stable
-/// across runs, and whose `results` carry one entry per [Finding]. A finding
-/// with a `file`/`line` is emitted with a `physicalLocation`; a file-less,
-/// whole-package finding is emitted as a valid result with no `locations` (a
-/// location array is optional in SARIF), so nothing is silently dropped.
+/// across runs, and whose `results` carry one entry per [Finding].
+///
+/// A `physicalLocation` is emitted **only when the finding has both a `file`
+/// and a `line`**. GitHub code-scanning ingestion requires `region.startLine`
+/// to place an annotation; a `physicalLocation` carrying an `artifactLocation`
+/// but no `region` is not displayable and gets pinned to line 1. Rather than
+/// invent that line, findings without a source line — whole-package signals
+/// (no `file`) and `pubspec.yaml`-level dependency findings (`file` but no
+/// `line`) — are emitted as valid results with **no `locations`** (the array
+/// is optional in SARIF); the file they concern remains named in the result's
+/// `message.text`, so nothing is silently dropped.
 class SarifReporter implements Reporter {
   const SarifReporter();
 
@@ -59,13 +66,17 @@ class SarifReporter implements Reporter {
         'ruleId': finding.kind.id,
         'level': _sarifLevel(finding.severity),
         'message': {'text': finding.message},
-        if (finding.file != null) 'locations': [_location(finding)],
+        // A SARIF location is only displayable when it pins a line, so emit one
+        // exclusively for findings that carry both a file and a line. See the
+        // class doc comment for why file-only findings get no `locations`.
+        if (finding.file != null && finding.line != null)
+          'locations': [_location(finding)],
       };
 
   Map<String, Object?> _location(Finding finding) => {
         'physicalLocation': {
           'artifactLocation': {'uri': _uri(finding.file!)},
-          if (finding.line != null) 'region': {'startLine': finding.line},
+          'region': {'startLine': finding.line},
         },
       };
 

@@ -23,10 +23,12 @@
   rule per check kind (`tool.driver.rules`, with a `shortDescription` and a
   `defaultConfiguration.level` mapped from severity — `error`/`warning`/`note`),
   and one `result` per finding (`ruleId` = check kind, mapped `level`, message,
-  and a `physicalLocation` with a relative POSIX URI + `startLine` when the
-  finding has a file/line). Whole-package / `pubspec.yaml` findings are emitted
-  as valid results without a `physicalLocation`. Wired through `--format` on
-  every subcommand.
+  and a `physicalLocation` with a relative POSIX URI + `region.startLine` only
+  when the finding has both a file and a line). Whole-package and
+  `pubspec.yaml`-level findings (a file but no line) are emitted as valid
+  results without a `physicalLocation`, since GitHub code-scanning needs
+  `region.startLine` and would otherwise pin a region-less location to line 1.
+  Wired through `--format` on every subcommand.
 - PR gate: `--changed-since <ref>` filters findings to files changed since a
   git ref (merge-base `<ref>...HEAD`); whole-package and `pubspec.yaml`
   findings are always kept, and a non-git tree or bad ref exits `64` with a
