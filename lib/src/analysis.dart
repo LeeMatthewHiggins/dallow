@@ -1,6 +1,8 @@
 import 'package:dallow/src/checks/circular_import_check.dart';
+import 'package:dallow/src/checks/complexity_check.dart';
 import 'package:dallow/src/checks/dead_code_check.dart';
 import 'package:dallow/src/checks/dependency_check.dart';
+import 'package:dallow/src/checks/duplication_check.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/graph/code_graph.dart';
 
@@ -8,9 +10,14 @@ import 'package:dallow/src/graph/code_graph.dart';
 enum Check {
   deadCode,
   dependencies,
-  circularImports;
+  circularImports,
+  duplication,
+  complexity;
 
-  bool get needsGraph => this != Check.dependencies;
+  bool get needsGraph =>
+      this == Check.deadCode ||
+      this == Check.circularImports ||
+      this == Check.complexity;
 }
 
 /// Runs the requested [checks] against the package rooted at [rootPath] and
@@ -22,10 +29,14 @@ Future<List<Finding>> analyze(
     Check.deadCode,
     Check.dependencies,
     Check.circularImports,
+    Check.duplication,
   },
   int? maxCycleSize,
+  int? minBlockSize,
+  int? maxComplexity,
 }) async {
   final findings = <Finding>[];
+  ComplexityResult? complexityResult;
 
   if (checks.any((c) => c.needsGraph)) {
     final graph = await CodeGraph.build(rootPath);
@@ -37,10 +48,33 @@ Future<List<Finding>> analyze(
         const CircularImportCheck().run(graph, maxCycleSize: maxCycleSize),
       );
     }
+    if (checks.contains(Check.complexity)) {
+      complexityResult = const ComplexityCheck().run(
+        graph,
+        maxComplexity: maxComplexity,
+      );
+      findings.addAll(complexityResult.findings);
+    }
   }
 
   if (checks.contains(Check.dependencies)) {
     findings.addAll(const DependencyCheck().run(rootPath));
+  }
+  if (checks.contains(Check.duplication)) {
+    findings.addAll(
+      const DuplicationCheck().run(rootPath, minBlockSize: minBlockSize),
+    );
+  }
+  if (complexityResult != null) {
+    findings.add(
+      complexityResult.healthFinding(
+        otherFindings: findings.where(
+          (f) =>
+              f.kind != CheckKind.highComplexity &&
+              f.kind != CheckKind.projectHealth,
+        ),
+      ),
+    );
   }
 
   return findings;

@@ -1,0 +1,77 @@
+import 'package:dallow/src/finding.dart';
+
+/// A stable identity for a [Finding] across runs, used to match a finding
+/// against a baseline.
+///
+/// It is derived from the finding's [CheckKind], file, symbol and a
+/// whitespace-normalised message — deliberately **not** the line number, so
+/// the fingerprint survives a finding shifting up or down its file when
+/// unrelated code is added or removed above it.
+///
+/// The value is a 64-bit FNV-1a hash rendered as 16 hex digits; it is opaque
+/// and only meaningful for equality.
+String fingerprintOf(Finding finding) {
+  final parts = [
+    finding.kind.id,
+    finding.file ?? '',
+    finding.symbol ?? '',
+    _normaliseMessage(finding.message),
+  ].join('\u0000');
+  return _fnv1a64Hex(parts);
+}
+
+/// Collapses runs of whitespace to a single space and trims the ends, so
+/// cosmetic reflowing of a message does not change its fingerprint.
+String _normaliseMessage(String message) =>
+    message.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+const int _fnvOffsetBasisLow = 0x84222325;
+const int _fnvOffsetBasisHigh = 0xcbf29ce4;
+
+/// 64-bit FNV-1a over the UTF-16 code units of [input], computed in two 32-bit
+/// halves so it stays exact on the Dart web (no native 64-bit int) as well as
+/// the VM. Rendered as a zero-padded 16-digit hex string.
+String _fnv1a64Hex(String input) {
+  var low = _fnvOffsetBasisLow;
+  var high = _fnvOffsetBasisHigh;
+  for (final unit in input.codeUnits) {
+    low ^= unit & 0xffff;
+    high ^= (unit >> 16) & 0xffff;
+    // Multiply the 64-bit accumulator by the FNV prime 0x100000001b3.
+    final result = _mul64(high, low);
+    high = result[0];
+    low = result[1];
+  }
+  return high.toRadixString(16).padLeft(8, '0') +
+      low.toRadixString(16).padLeft(8, '0');
+}
+
+/// Multiplies the 64-bit value (high<<32 | low) by the FNV prime
+/// 0x100000001b3 and returns the low 64 bits as `[high, low]` 32-bit halves.
+List<int> _mul64(int high, int low) {
+  // prime = 0x100000001b3 = (0x100 << 32) | 0x000001b3
+  const primeLow = 0x000001b3;
+  const primeHigh = 0x00000100;
+
+  final a0 = low & 0xffff;
+  final a1 = (low >> 16) & 0xffff;
+  final a2 = high & 0xffff;
+  final a3 = (high >> 16) & 0xffff;
+
+  const b0 = primeLow & 0xffff;
+  const b1 = (primeLow >> 16) & 0xffff;
+  const b2 = primeHigh & 0xffff;
+  const b3 = (primeHigh >> 16) & 0xffff;
+
+  final c0 = a0 * b0;
+  final c1 = (c0 >>> 16) + a0 * b1 + a1 * b0;
+  final c2 = (c1 >>> 16) + a0 * b2 + a1 * b1 + a2 * b0;
+  final c3 = (c2 >>> 16) + a0 * b3 + a1 * b2 + a2 * b1 + a3 * b0;
+
+  final r0 = c0 & 0xffff;
+  final r1 = c1 & 0xffff;
+  final r2 = c2 & 0xffff;
+  final r3 = c3 & 0xffff;
+
+  return [(r3 << 16) | r2, (r1 << 16) | r0];
+}

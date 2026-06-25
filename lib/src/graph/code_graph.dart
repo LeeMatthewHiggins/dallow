@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:path/path.dart' as p;
@@ -74,7 +75,8 @@ String _realpath(String path) {
   }
 }
 
-/// A declared top-level symbol in the analysed package.
+/// A declared symbol in the analysed package — either a top-level declaration
+/// or, when [isMember] is true, a class/mixin/enum/extension member.
 class CodeNode {
   CodeNode({
     required this.element,
@@ -86,6 +88,9 @@ class CodeNode {
     required this.isUnderLibSrc,
     required this.isConsumerFile,
     required this.isPublicApi,
+    this.isMember = false,
+    this.owner,
+    this.enclosingName,
   });
 
   final Element element;
@@ -103,10 +108,38 @@ class CodeNode {
   final bool isConsumerFile;
 
   /// A public symbol declared directly under `lib/`, forming the package's
-  /// exported API surface.
+  /// exported API surface. Always false for members (a member's API status is
+  /// derived from its [owner]).
   final bool isPublicApi;
 
+  /// True when this node is a class member (method, getter, setter or field)
+  /// rather than a top-level declaration.
+  final bool isMember;
+
+  /// The top-level node enclosing this member, or null for a top-level node.
+  final CodeNode? owner;
+
+  /// The simple name of the enclosing type, for member findings (e.g. `Foo`
+  /// in `Foo.bar`).
+  final String? enclosingName;
+
   final Set<CodeNode> references = {};
+}
+
+/// A function-like body whose cyclomatic complexity can be measured without
+/// re-parsing source files outside [CodeGraph.build].
+class FunctionComplexity {
+  const FunctionComplexity({
+    required this.symbol,
+    required this.relativePath,
+    required this.line,
+    required this.complexity,
+  });
+
+  final String symbol;
+  final String relativePath;
+  final int line;
+  final int complexity;
 }
 
 /// The resolved symbol graph for a single package, plus the file-level import
@@ -118,13 +151,23 @@ class CodeGraph {
 
   final Map<Element, CodeNode> _nodes = {};
 
+  /// Class/mixin/enum/extension members, keyed by their declaring element.
+  final Map<Element, CodeNode> _memberNodes = {};
+
   /// File-level import edges, keyed by absolute path, restricted to files
   /// inside the analysed package.
   final Map<String, Set<String>> imports = {};
 
   final Set<CodeNode> _exportedApi = {};
+  final List<FunctionComplexity> _functions = [];
 
   Iterable<CodeNode> get nodes => _nodes.values;
+
+  /// All registered class members (methods, getters, setters, fields).
+  Iterable<CodeNode> get memberNodes => _memberNodes.values;
+
+  /// Function, method, constructor, and closure complexity measurements.
+  Iterable<FunctionComplexity> get functions => _functions;
 
   /// Nodes that form the package's public API surface, including symbols
   /// surfaced from `lib/src/` through a re-`export` from a public library.
@@ -172,7 +215,8 @@ class CodeGraph {
       graph
         .._registerReferences(unit)
         .._registerImports(unit)
-        .._registerExportedApi(unit);
+        .._registerExportedApi(unit)
+        .._registerComplexity(unit);
     }
 
     return graph;
@@ -209,7 +253,7 @@ class CodeGraph {
       if (result.path != element.source?.fullName) continue;
 
       final isPrivate = name.startsWith('_');
-      _nodes[element] = CodeNode(
+      final node = CodeNode(
         element: element,
         name: name,
         absolutePath: result.path,
@@ -220,11 +264,77 @@ class CodeGraph {
         isConsumerFile: isConsumerFile,
         isPublicApi: isUnderLib && !isUnderLibSrc && !isPrivate,
       );
+      _nodes[element] = node;
+
+      // Register the members of types so dead-code analysis can reach below the
+      // top-level granularity (unused methods/fields). Functions, typedefs and
+      // variables have no members.
+      if (element is InstanceElement) {
+        _registerMembers(
+          node,
+          element,
+          result,
+          relativePath: relativePath,
+          isUnderLibSrc: isUnderLibSrc,
+          isConsumerFile: isConsumerFile,
+        );
+      }
+    }
+  }
+
+  /// Registers the declared members (methods, explicit getters/setters and
+  /// fields) of [type] as member nodes owned by [owner]. Synthetic members,
+  /// constructors and enum constants are skipped: they are either implicit or
+  /// reached through their type rather than as standalone dead candidates.
+  void _registerMembers(
+    CodeNode owner,
+    InstanceElement type,
+    ResolvedUnitResult result, {
+    required String relativePath,
+    required bool isUnderLibSrc,
+    required bool isConsumerFile,
+  }) {
+    // The representation field of an `extension type` is implicit to the type
+    // and always "used"; never report it as a standalone dead field.
+    final representation =
+        type is ExtensionTypeElement ? type.representation : null;
+    final members = <Element>[
+      ...type.methods,
+      ...type.fields.where(
+        (f) => !f.isSynthetic && !f.isEnumConstant && f != representation,
+      ),
+      ...type.accessors.where((a) => !a.isSynthetic),
+    ];
+
+    for (final element in members) {
+      final name = element.name;
+      if (name == null || name.isEmpty) continue;
+      if (element.isSynthetic) continue;
+      if (result.path != element.source?.fullName) continue;
+
+      _memberNodes[element] = CodeNode(
+        element: element,
+        name: name,
+        absolutePath: result.path,
+        relativePath: relativePath,
+        line: _lineOf(result, element.nameOffset),
+        isPrivate: name.startsWith('_'),
+        isUnderLibSrc: isUnderLibSrc,
+        isConsumerFile: isConsumerFile,
+        isPublicApi: false,
+        isMember: true,
+        owner: owner,
+        enclosingName: type.name,
+      );
     }
   }
 
   void _registerReferences(ResolvedUnitResult result) {
     result.unit.accept(_ReferenceVisitor(this));
+  }
+
+  void _registerComplexity(ResolvedUnitResult result) {
+    result.unit.accept(_ComplexityCollector(this, result));
   }
 
   void _registerImports(ResolvedUnitResult result) {
@@ -241,6 +351,19 @@ class CodeGraph {
         edges.add(resolved);
       }
     }
+  }
+
+  /// Maps a referenced [element] to its member node, or null when it is not a
+  /// registered member. A synthetic property accessor (the implicit getter or
+  /// setter of a field) is unwrapped to its backing field, so reading or
+  /// writing a field resolves to the field's node.
+  CodeNode? memberNodeOf(Element? element) {
+    var current = element;
+    if (current is PropertyAccessorElement && current.isSynthetic) {
+      current = current.variable2;
+    }
+    if (current == null) return null;
+    return _memberNodes[current];
   }
 
   /// Maps an arbitrary referenced [element] back to the top-level [CodeNode]
@@ -300,7 +423,9 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   CodeNode? _current;
 
   void _withOwner(Element? owner, void Function() body) {
-    final node = _graph.ownerOf(owner);
+    // Prefer the most specific (member) node so references made inside a member
+    // body are attributed to that member, not just its enclosing type.
+    final node = _graph.memberNodeOf(owner) ?? _graph.ownerOf(owner);
     final previous = _current;
     if (node != null) _current = node;
     body();
@@ -349,6 +474,43 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   }
 
   @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    // Covers methods, operators and explicit getters/setters.
+    _withOwner(node.declaredElement, () => super.visitMethodDeclaration(node));
+  }
+
+  @override
+  void visitFieldDeclaration(FieldDeclaration node) {
+    final variables = node.fields.variables;
+    final first = variables.isEmpty ? null : variables.first.declaredElement;
+    _withOwner(first, () => node.fields.type?.accept(this));
+    for (final variable in variables) {
+      _withOwner(variable.declaredElement, () => variable.accept(this));
+    }
+  }
+
+  @override
+  void visitFieldFormalParameter(FieldFormalParameter node) {
+    // `MyClass(this.x)` initialises field `x`; treat it as a use so a field
+    // only ever set through a constructor is not reported as dead.
+    final element = node.declaredElement;
+    if (element is FieldFormalParameterElement) _record(element.field);
+    super.visitFieldFormalParameter(node);
+  }
+
+  @override
+  void visitSuperFormalParameter(SuperFormalParameter node) {
+    // `MyClass(super.x)` forwards to a superclass field formal; keep that
+    // field alive too.
+    final element = node.declaredElement;
+    if (element is SuperFormalParameterElement) {
+      final forwarded = element.superConstructorParameter;
+      if (forwarded is FieldFormalParameterElement) _record(forwarded.field);
+    }
+    super.visitSuperFormalParameter(node);
+  }
+
+  @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
     final variables = node.variables.variables;
     final first = variables.isEmpty ? null : variables.first.declaredElement;
@@ -372,10 +534,207 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   void _record(Element? referenced) {
     if (referenced == null) return;
-    final target = _graph.ownerOf(referenced);
-    if (target == null) return;
     final from = _current;
-    if (from == null || identical(from, target)) return;
+    if (from == null) return;
+
+    final memberTarget = _graph.memberNodeOf(referenced);
+    final topLevelTarget = _graph.ownerOf(referenced);
+
+    // The enclosing scope reaches both the referenced member (if the reference
+    // resolves to one) and its top-level owner, so member-level and top-level
+    // reachability stay independently correct.
+    _addEdge(from, memberTarget);
+    _addEdge(from, topLevelTarget);
+
+    // Preserve the pre-member-analysis invariant: a reference made inside a
+    // member body also counts as a *top-level* use by the enclosing type —
+    // exactly as it did when the type was the only recorded scope. This keeps
+    // top-level reachability a true superset of the old behaviour (byte-for-
+    // byte), independent of whether the member itself is reachable, so a
+    // member-level false positive can never demote a top-level symbol. Only the
+    // top-level owner edge is replayed (not the member edge): leaking the
+    // member target through the owner would mask genuinely-dead members
+    // referenced only from other dead members.
+    if (from.isMember) _addEdge(from.owner, topLevelTarget);
+  }
+
+  void _addEdge(CodeNode? from, CodeNode? target) {
+    if (from == null || target == null || identical(from, target)) return;
     from.references.add(target);
+  }
+}
+
+class _ComplexityCollector extends RecursiveAstVisitor<void> {
+  _ComplexityCollector(this._graph, this._result);
+
+  final CodeGraph _graph;
+  final ResolvedUnitResult _result;
+
+  @override
+  void visitFunctionDeclaration(FunctionDeclaration node) {
+    _record(node.name.lexeme, node.functionExpression.body);
+    node.functionExpression.body.accept(this);
+  }
+
+  @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    final owner = _enclosingTypeName(node);
+    final name =
+        owner == null ? node.name.lexeme : '$owner.${node.name.lexeme}';
+    _record(name, node.body);
+    node.body.accept(this);
+  }
+
+  @override
+  void visitConstructorDeclaration(ConstructorDeclaration node) {
+    final owner = _enclosingTypeName(node) ?? '<constructor>';
+    final suffix = node.name == null ? '' : '.${node.name!.lexeme}';
+    _record('$owner$suffix', node.body);
+    node.body.accept(this);
+  }
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {
+    if (node.parent is FunctionDeclaration) return;
+    final line = _result.lineInfo.getLocation(node.offset).lineNumber;
+    _record('${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
+        node.body);
+    node.body.accept(this);
+  }
+
+  void _record(String symbol, FunctionBody body) {
+    _graph._functions.add(
+      FunctionComplexity(
+        symbol: symbol,
+        relativePath: p.relative(_result.path, from: _graph.rootPath),
+        line: _result.lineInfo.getLocation(body.parent!.offset).lineNumber,
+        complexity: _ComplexityCounter.count(body),
+      ),
+    );
+  }
+
+  String? _enclosingTypeName(AstNode node) {
+    var current = node.parent;
+    while (current != null) {
+      if (current is ClassDeclaration) return current.name.lexeme;
+      if (current is MixinDeclaration) return current.name.lexeme;
+      if (current is EnumDeclaration) return current.name.lexeme;
+      if (current is ExtensionDeclaration) {
+        return current.name?.lexeme ?? '<extension>';
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  String? _enclosingCallableName(AstNode node) {
+    var current = node.parent;
+    while (current != null) {
+      if (current is FunctionDeclaration) return current.name.lexeme;
+      if (current is MethodDeclaration) {
+        final owner = _enclosingTypeName(current);
+        return owner == null
+            ? current.name.lexeme
+            : '$owner.${current.name.lexeme}';
+      }
+      if (current is ConstructorDeclaration) {
+        final owner = _enclosingTypeName(current);
+        if (owner == null) return null;
+        final suffix = current.name == null ? '' : '.${current.name!.lexeme}';
+        return '$owner$suffix';
+      }
+      if (current is VariableDeclaration) return current.name.lexeme;
+      current = current.parent;
+    }
+    return null;
+  }
+}
+
+class _ComplexityCounter extends RecursiveAstVisitor<void> {
+  _ComplexityCounter();
+
+  int complexity = 1;
+
+  static int count(FunctionBody body) {
+    final counter = _ComplexityCounter();
+    body.accept(counter);
+    return counter.complexity;
+  }
+
+  @override
+  void visitFunctionDeclaration(FunctionDeclaration node) {}
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {}
+
+  @override
+  void visitIfStatement(IfStatement node) {
+    complexity++;
+    super.visitIfStatement(node);
+  }
+
+  @override
+  void visitForStatement(ForStatement node) {
+    complexity++;
+    super.visitForStatement(node);
+  }
+
+  @override
+  void visitForElement(ForElement node) {
+    complexity++;
+    super.visitForElement(node);
+  }
+
+  @override
+  void visitWhileStatement(WhileStatement node) {
+    complexity++;
+    super.visitWhileStatement(node);
+  }
+
+  @override
+  void visitDoStatement(DoStatement node) {
+    complexity++;
+    super.visitDoStatement(node);
+  }
+
+  @override
+  void visitSwitchCase(SwitchCase node) {
+    complexity++;
+    super.visitSwitchCase(node);
+  }
+
+  @override
+  void visitSwitchPatternCase(SwitchPatternCase node) {
+    complexity++;
+    super.visitSwitchPatternCase(node);
+  }
+
+  @override
+  void visitSwitchExpressionCase(SwitchExpressionCase node) {
+    complexity++;
+    super.visitSwitchExpressionCase(node);
+  }
+
+  @override
+  void visitCatchClause(CatchClause node) {
+    complexity++;
+    super.visitCatchClause(node);
+  }
+
+  @override
+  void visitConditionalExpression(ConditionalExpression node) {
+    complexity++;
+    super.visitConditionalExpression(node);
+  }
+
+  @override
+  void visitBinaryExpression(BinaryExpression node) {
+    final type = node.operator.type;
+    if (type == TokenType.AMPERSAND_AMPERSAND ||
+        type == TokenType.BAR_BAR ||
+        type == TokenType.QUESTION_QUESTION) {
+      complexity++;
+    }
+    super.visitBinaryExpression(node);
   }
 }

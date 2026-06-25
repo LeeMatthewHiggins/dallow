@@ -4,7 +4,11 @@ enum CheckKind {
   unusedDependency('unused-dependency'),
   missingDependency('missing-dependency'),
   misplacedDependency('misplaced-dependency'),
-  circularImport('circular-import');
+  circularImport('circular-import'),
+  duplicateCode('duplicate-code'),
+  highComplexity('high-complexity'),
+  projectHealth('project-health'),
+  unusedIgnore('unused-ignore');
 
   const CheckKind(this.id);
 

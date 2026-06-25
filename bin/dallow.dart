@@ -12,7 +12,9 @@ Future<void> main(List<String> args) async {
     ..addCommand(_AnalyzeCommand())
     ..addCommand(_DeadCodeCommand())
     ..addCommand(_DepsCommand())
-    ..addCommand(_CircularCommand());
+    ..addCommand(_CircularCommand())
+    ..addCommand(_DuplicationCommand())
+    ..addCommand(_ComplexityCommand());
 
   try {
     final code = await runner.run(args) ?? 0;
@@ -29,9 +31,10 @@ abstract class _CheckCommand extends Command<int> {
       ..addOption(
         'format',
         abbr: 'f',
-        allowed: ['console', 'json', 'markdown'],
+        allowed: ['console', 'json', 'markdown', 'sarif'],
         defaultsTo: 'console',
-        help: 'Output format.',
+        help: 'Output format. `sarif` emits a SARIF 2.1.0 log for '
+            'code-scanning platforms.',
       )
       ..addOption(
         'fail-on',
@@ -44,6 +47,41 @@ abstract class _CheckCommand extends Command<int> {
         help: 'Skip dependency cycles with more than this many files. Useful '
             'to ignore a known barrel mega-cycle while still catching small '
             'new cycles.',
+      )
+      ..addOption(
+        'changed-since',
+        help: 'Only report findings in files changed since this git ref '
+            '(merge-base of <ref>...HEAD), e.g. origin/main or a SHA. '
+            'Whole-package findings (no file / pubspec-level) are always '
+            'kept. Requires the package to be inside a git work tree.',
+      )
+      ..addOption(
+        'baseline',
+        help: 'Suppress findings recorded in this JSON baseline file, so the '
+            'gate fails only on findings introduced after it was written.',
+      )
+      ..addOption(
+        'write-baseline',
+        help: 'Write the current findings to this file as a baseline and exit '
+            '0, instead of gating. Run once to adopt the gate on an existing '
+            'codebase.',
+      )
+      ..addOption(
+        'min-block-size',
+        help: 'Minimum duplicate token block size. Defaults to '
+            '$defaultDuplicateBlockSize.',
+      )
+      ..addOption(
+        'max-complexity',
+        help: 'Maximum cyclomatic complexity before a function is reported. '
+            'Defaults to $defaultMaxComplexity.',
+      )
+      ..addFlag(
+        'report-unused-ignores',
+        negatable: false,
+        help: 'Emit an info-level unused-ignore finding for every '
+            "'dallow-ignore' comment that suppressed nothing (a stale "
+            'directive). Off by default to keep output quiet.',
       );
   }
 
@@ -73,21 +111,106 @@ abstract class _CheckCommand extends Command<int> {
       );
       return 64;
     }
+    final minBlockSizeRaw = argResults!['min-block-size'] as String?;
+    final minBlockSize =
+        minBlockSizeRaw == null ? null : int.tryParse(minBlockSizeRaw);
+    if (minBlockSizeRaw != null && minBlockSize == null) {
+      stderr.writeln('--min-block-size must be an integer: $minBlockSizeRaw');
+      return 64;
+    }
+    if (minBlockSize != null && minBlockSize < minDuplicateBlockSize) {
+      stderr.writeln(
+        '--min-block-size must be at least $minDuplicateBlockSize; smaller '
+        'matches are too noisy to gate reliably.',
+      );
+      return 64;
+    }
+    final maxComplexityRaw = argResults!['max-complexity'] as String?;
+    final maxComplexity =
+        maxComplexityRaw == null ? null : int.tryParse(maxComplexityRaw);
+    if (maxComplexityRaw != null && maxComplexity == null) {
+      stderr.writeln('--max-complexity must be an integer: $maxComplexityRaw');
+      return 64;
+    }
+    if (maxComplexity != null && maxComplexity < minComplexityThreshold) {
+      stderr.writeln(
+        '--max-complexity must be at least $minComplexityThreshold.',
+      );
+      return 64;
+    }
 
     final List<Finding> findings;
     try {
-      findings =
-          await analyze(root, checks: checks, maxCycleSize: maxCycleSize);
+      findings = await analyze(
+        root,
+        checks: checks,
+        maxCycleSize: maxCycleSize,
+        minBlockSize: minBlockSize,
+        maxComplexity: maxComplexity,
+      );
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;
     }
 
+    // --write-baseline short-circuits the gate: capture all current findings
+    // and exit 0, regardless of --changed-since / --baseline.
+    final writeBaseline = argResults!['write-baseline'] as String?;
+    if (writeBaseline != null) {
+      File(writeBaseline).writeAsStringSync(encodeBaseline(findings));
+      stderr.writeln(
+        'Wrote baseline with ${findings.length} finding(s) to $writeBaseline',
+      );
+      return 0;
+    }
+
+    final List<Finding> gated;
+    try {
+      gated = await _applyGate(findings, root);
+    } on GateException catch (e) {
+      stderr.writeln(e.message);
+      return 64;
+    }
+
     final format = ReportFormat.values.byName(argResults!['format'] as String);
-    stdout.writeln(Reporter(format).render(findings));
+    stdout.writeln(Reporter(format).render(gated));
 
     final failOn = FailOn.values.byName(argResults!['fail-on'] as String);
-    return exitCodeFor(findings, failOn: failOn);
+    return exitCodeFor(gated, failOn: failOn);
+  }
+
+  /// Applies the PR-gate filters — inline `dallow-ignore` suppression, then
+  /// `--changed-since`, then `--baseline` — in sequence. All are pure keep/drop
+  /// predicates, so the survivor set is order-independent; suppression runs
+  /// *first*, against the raw findings, so an unused-ignore report reflects
+  /// directives that genuinely matched nothing rather than ones whose finding a
+  /// later filter had already dropped.
+  Future<List<Finding>> _applyGate(List<Finding> findings, String root) async {
+    final filters = <FindingFilter>[];
+
+    final suppressions = const SuppressionScanner().scan(root);
+    filters.add(suppressions.apply);
+
+    final changedSince = argResults!['changed-since'] as String?;
+    if (changedSince != null) {
+      final changed = await changedFilesSince(changedSince, packageRoot: root);
+      filters.add(changedSinceFilter(changed));
+    }
+
+    final baselinePath = argResults!['baseline'] as String?;
+    if (baselinePath != null) {
+      final file = File(baselinePath);
+      if (!file.existsSync()) {
+        throw GateException('No such baseline file: $baselinePath');
+      }
+      filters.add(baselineFilter(Baseline.parse(file.readAsStringSync())));
+    }
+
+    final gated = applyFilters(findings, filters);
+    if (argResults!['report-unused-ignores'] as bool) {
+      return [...gated, ...suppressions.unusedFindings];
+    }
+    return gated;
   }
 }
 
@@ -133,4 +256,26 @@ class _CircularCommand extends _CheckCommand {
 
   @override
   Set<Check> get checks => {Check.circularImports};
+}
+
+class _DuplicationCommand extends _CheckCommand {
+  @override
+  String get name => 'duplication';
+
+  @override
+  String get description => 'Detect duplicated Dart token blocks.';
+
+  @override
+  Set<Check> get checks => {Check.duplication};
+}
+
+class _ComplexityCommand extends _CheckCommand {
+  @override
+  String get name => 'complexity';
+
+  @override
+  String get description => 'Measure cyclomatic complexity and project health.';
+
+  @override
+  Set<Check> get checks => {Check.complexity};
 }
