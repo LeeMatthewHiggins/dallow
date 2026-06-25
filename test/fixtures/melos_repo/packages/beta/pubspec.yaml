@@ -1,0 +1,7 @@
+name: beta
+description: Member package with a missing-dependency error.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

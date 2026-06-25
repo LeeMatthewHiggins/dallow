@@ -1,0 +1,7 @@
+name: unsupported_glob_repo
+
+# A character class is outside the supported subset. Discovery must reject it
+# loudly (UnsupportedGlobException) rather than treat it as a literal that
+# silently matches nothing.
+packages:
+  - "packages/[ab]"

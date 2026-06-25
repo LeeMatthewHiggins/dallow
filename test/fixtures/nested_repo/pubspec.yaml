@@ -1,0 +1,9 @@
+name: nested_root
+description: >-
+  A plain repo with no melos.yaml and no `workspace:` list. Discovery falls
+  back to walking for nested pubspecs, including this root.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

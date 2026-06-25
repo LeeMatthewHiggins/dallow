@@ -1,0 +1,11 @@
+name: brace_repo
+
+# Exercises the supported melos glob subset:
+#   packages/**     → plain ** descent (packages/core)
+#   {examples,e2e}  → brace alternation across two top-level trees
+#   **/single?      → ** zero-leading-segment + ? single-char wildcard (singleX)
+# `other/thing` matches none of these and must be excluded.
+packages:
+  - "packages/**"
+  - "{examples,e2e}/**"
+  - "**/single?"

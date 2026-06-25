@@ -1,0 +1,7 @@
+name: melos_repo
+description: Melos workspace root; not itself a member package.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

@@ -1,0 +1,9 @@
+name: decoy
+description: >-
+  A pubspec mirrored under a skipped dir (Flutter copies plugin packages into
+  .symlinks). Discovery must never collect it as a workspace member.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

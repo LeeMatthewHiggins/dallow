@@ -1,0 +1,9 @@
+name: one
+description: Workspace member one.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
+
+resolution: workspace

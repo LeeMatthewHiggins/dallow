@@ -1,0 +1,7 @@
+name: three
+description: A package NOT listed under `workspace:`; must not be a member.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

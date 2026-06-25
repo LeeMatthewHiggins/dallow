@@ -1,0 +1,7 @@
+name: single_x
+description: "Brace fixture: matched by **/single? (zero-leading **, ? wildcard)."
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

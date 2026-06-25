@@ -1,0 +1,7 @@
+name: ignored
+description: Excluded from the workspace by the melos `ignore:` list.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

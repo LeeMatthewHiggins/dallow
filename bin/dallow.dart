@@ -82,6 +82,16 @@ abstract class _CheckCommand extends Command<int> {
         help: 'Emit an info-level unused-ignore finding for every '
             "'dallow-ignore' comment that suppressed nothing (a stale "
             'directive). Off by default to keep output quiet.',
+      )
+      ..addFlag(
+        'recursive',
+        abbr: 'r',
+        negatable: false,
+        help: 'Scan every member package of a monorepo (melos / pub workspace '
+            '/ nested pubspecs) in one run, aggregating the results. Findings '
+            'are attributed to their package. melos package globs support '
+            '*, **, ?, and {a,b} brace alternation; any other syntax is '
+            'rejected rather than silently matching nothing.',
       );
   }
 
@@ -139,15 +149,48 @@ abstract class _CheckCommand extends Command<int> {
       return 64;
     }
 
+    final recursive = argResults!['recursive'] as bool;
+    WorkspaceDiscovery? discovery;
+    if (recursive) {
+      try {
+        discovery = discoverWorkspace(root);
+      } on UnsupportedGlobException catch (e) {
+        stderr.writeln(e);
+        return 64;
+      }
+      if (discovery.packageRoots.isEmpty) {
+        stderr.writeln(
+          'No packages found under $root. Looked for melos.yaml packages, a '
+          'pub workspace (pubspec.yaml with a workspace: list), then any '
+          'nested pubspec.yaml.',
+        );
+        return 64;
+      }
+      // Informational, on stderr so stdout stays clean for json/markdown.
+      stderr.writeln(
+        'Scanning ${discovery.packageRoots.length} packages '
+        '(${discovery.strategy.name}).',
+      );
+    }
+
     final List<Finding> findings;
     try {
-      findings = await analyze(
-        root,
-        checks: checks,
-        maxCycleSize: maxCycleSize,
-        minBlockSize: minBlockSize,
-        maxComplexity: maxComplexity,
-      );
+      findings = recursive
+          ? await analyzeWorkspace(
+              root,
+              checks: checks,
+              maxCycleSize: maxCycleSize,
+              minBlockSize: minBlockSize,
+              maxComplexity: maxComplexity,
+              discovery: discovery,
+            )
+          : await analyze(
+              root,
+              checks: checks,
+              maxCycleSize: maxCycleSize,
+              minBlockSize: minBlockSize,
+              maxComplexity: maxComplexity,
+            );
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;

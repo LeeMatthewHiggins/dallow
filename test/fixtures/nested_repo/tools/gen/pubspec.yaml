@@ -1,0 +1,7 @@
+name: gen
+description: A more deeply nested package discovered by the fallback walk.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
