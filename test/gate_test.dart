@@ -146,8 +146,7 @@ void main() {
       File(p.join(repo.path, 'a.dart')).writeAsStringSync('// a changed\n');
       await git(['commit', '-aqm', 'touch a']);
 
-      final changed =
-          await changedFilesSince('main', packageRoot: repo.path);
+      final changed = await changedFilesSince('main', packageRoot: repo.path);
       expect(changed, contains('a.dart'));
       expect(changed, isNot(contains('b.dart')));
     });

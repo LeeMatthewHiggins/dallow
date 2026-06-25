@@ -70,8 +70,7 @@ Future<Set<String>> changedFilesSince(
 /// conservative choice (a new whole-package problem still fails the gate).
 FindingFilter changedSinceFilter(Set<String> changedFiles) {
   final normalised = changedFiles.map(p.normalize).toSet();
-  return (findings) =>
-      findings.where((f) => _keep(f, normalised)).toList();
+  return (findings) => findings.where((f) => _keep(f, normalised)).toList();
 }
 
 bool _keep(Finding finding, Set<String> changedFiles) {
