@@ -244,6 +244,8 @@ void main() {
 
   group('complexity check', () {
     final complexityFixture = p.absolute('test', 'fixtures', 'complexity');
+    final switchExpressionFixture =
+        p.absolute('test', 'fixtures', 'switch_expression');
 
     test('reports functions above the complexity threshold', () async {
       final findings = await analyze(
@@ -291,6 +293,22 @@ void main() {
       );
     });
 
+    test('counts switch expression arms as decision points', () async {
+      final findings = await analyze(
+        switchExpressionFixture,
+        checks: {Check.complexity},
+        maxComplexity: 1,
+      );
+
+      final finding = findings.singleWhere(
+        (f) => f.kind == CheckKind.highComplexity,
+      );
+      expect(finding.file, 'lib/switch_expression.dart');
+      expect(finding.line, 1);
+      expect(finding.symbol, 'switchExpression');
+      expect(finding.message, contains('complexity 7'));
+    });
+
     test('pins the project health score formula', () async {
       final findings = await analyze(
         complexityFixture,
@@ -304,6 +322,29 @@ void main() {
       expect(health.severity, Severity.info);
       expect(health.message, contains('Project health score: 97/100'));
       expect(health.message, contains('2 function(s) analysed'));
+    });
+
+    test('includes non-complexity findings in combined analysis health score',
+        () async {
+      final findings = await analyze(
+        fixture,
+        checks: {
+          Check.deadCode,
+          Check.dependencies,
+          Check.circularImports,
+          Check.duplication,
+          Check.complexity,
+        },
+        maxComplexity: 10,
+      );
+
+      final health = findings.singleWhere(
+        (f) => f.kind == CheckKind.projectHealth,
+      );
+      expect(health.message, contains('Project health score: 97/100'));
+      expect(health.message, contains('23 function(s) analysed'));
+      expect(health.message, contains('complexity penalty 0'));
+      expect(health.message, contains('findings penalty 3'));
     });
   });
 

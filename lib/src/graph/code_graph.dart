@@ -695,6 +695,12 @@ class _ComplexityCounter extends RecursiveAstVisitor<void> {
   }
 
   @override
+  void visitSwitchExpressionCase(SwitchExpressionCase node) {
+    complexity++;
+    super.visitSwitchExpressionCase(node);
+  }
+
+  @override
   void visitCatchClause(CatchClause node) {
     complexity++;
     super.visitCatchClause(node);
