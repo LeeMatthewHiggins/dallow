@@ -59,6 +59,7 @@ dallow complexity [path]   # only complexity metrics and health score
 | `--changed-since <ref>` | Only report findings in files changed since a git ref (the merge-base of `<ref>...HEAD`) — see [PR gate](#pr-gate) | off |
 | `--baseline <file>` | Suppress findings recorded in a baseline file, so the gate fails only on findings introduced after it was written | off |
 | `--write-baseline <file>` | Write the current findings to `<file>` as a baseline and exit `0`, instead of gating | off |
+| `--report-unused-ignores` | Emit an info-level `unused-ignore` finding for every `dallow-ignore` comment that suppressed nothing — see [Inline suppression](#inline-suppression-dallow-ignore) | off |
 
 These options apply to every subcommand (`analyze`, `dead-code`, `deps`,
 `circular`, `duplication`, `complexity`).
@@ -127,6 +128,42 @@ backlog down. The two flags compose: `--changed-since origin/main --baseline
 .dallow-baseline.json` gates only on new findings, in changed files, that
 aren't already baselined.
 
+### Inline suppression (`dallow-ignore`)
+
+When a single finding is a deliberate, reviewed exception, silence it in place
+with a `dallow-ignore` comment instead of carrying it in the baseline. The
+comment goes **on the finding's line** or **on the line directly above it**:
+
+```dart
+// dallow-ignore
+void _legacyEntryPoint() {} // kept for the old plugin ABI
+
+void _debugDump() {} // dallow-ignore: dead-code
+```
+
+- **Unscoped** — `// dallow-ignore` suppresses *every* finding on its target
+  line.
+- **Scoped** — `// dallow-ignore: <check-kind>` suppresses only that kind; pass
+  a comma-separated list (`dallow-ignore: dead-code, duplicate-code`) for
+  several. The kind is the stable id shown in `[brackets]` in console output
+  (`dead-code`, `duplicate-code`, `unused-dependency`, …). Anything after the
+  kinds is treated as a free-text reason.
+
+Suppressed findings are removed **before** the gate, so they neither print nor
+affect the exit code — exactly like a baselined finding. Suppression composes
+with `--changed-since` and `--baseline`; it is applied first, against the raw
+findings. Comments are read from the analyzer's own token stream, not by
+scanning text, so a `dallow-ignore` inside a string literal is not a directive.
+
+Whole-package findings (no source line — a missing dependency, say) can't be
+annotated on a line and so can't be suppressed this way; baseline them instead.
+
+A directive that matches nothing — typically one left behind after the finding
+it silenced was fixed — is silently ignored by default. Pass
+`--report-unused-ignores` to surface each as an info-level `unused-ignore`
+finding so stale directives can be cleaned up (they gate only under
+`--fail-on info`).
+
 ## How it works
 
 1. The package is resolved with the `analyzer`'s `AnalysisContextCollection`,
@@ -150,6 +187,8 @@ aren't already baselined.
    and `findingsPenalty = min(40, round((2 * errors + warnings + 0.25 * info) / max(functionCount, 1) * 5))`
    across the other enabled checks. Complexity and health findings themselves
    are excluded from the findings-density penalty.
+7. The same token stream is read for `dallow-ignore` comments, which suppress
+   matching findings before the gate runs.
 
 ## Roadmap
 

@@ -14,5 +14,6 @@ export 'src/gate/baseline.dart';
 export 'src/gate/diff_filter.dart';
 export 'src/gate/finding_filter.dart';
 export 'src/gate/fingerprint.dart';
+export 'src/gate/suppression.dart';
 export 'src/graph/code_graph.dart';
 export 'src/report/reporter.dart';

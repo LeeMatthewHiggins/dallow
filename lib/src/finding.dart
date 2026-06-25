@@ -7,7 +7,8 @@ enum CheckKind {
   circularImport('circular-import'),
   duplicateCode('duplicate-code'),
   highComplexity('high-complexity'),
-  projectHealth('project-health');
+  projectHealth('project-health'),
+  unusedIgnore('unused-ignore');
 
   const CheckKind(this.id);
 
