@@ -107,6 +107,11 @@ const _ruleSeverities = <CheckKind, Severity>{
   CheckKind.misplacedDependency: Severity.warning,
   CheckKind.circularImport: Severity.warning,
   CheckKind.duplicateCode: Severity.warning,
+  // A function over the complexity threshold is a warning (an error once it
+  // reaches twice the threshold); the catalogue advertises the lower default.
+  CheckKind.highComplexity: Severity.warning,
+  CheckKind.projectHealth: Severity.info,
+  CheckKind.unusedIgnore: Severity.info,
 };
 
 /// A one-line `shortDescription` for each rule in the driver catalogue.
@@ -120,4 +125,8 @@ const _ruleDescriptions = <CheckKind, String>{
       'A dependency declared in the wrong pubspec.yaml section.',
   CheckKind.circularImport: 'An import/export cycle between files.',
   CheckKind.duplicateCode: 'A duplicated block of Dart tokens.',
+  CheckKind.highComplexity:
+      'A function whose cyclomatic complexity exceeds the threshold.',
+  CheckKind.projectHealth: 'An aggregate project-health score (0–100).',
+  CheckKind.unusedIgnore: 'A dallow-ignore directive that suppressed nothing.',
 };

@@ -76,6 +76,32 @@ void main() {
       expect(driver['informationUri']! as String, startsWith('http'));
     });
 
+    test(
+        'every CheckKind yields a rule with a non-null shortDescription.text '
+        'and defaultConfiguration.level', () {
+      // Regression: the rule catalogue is built by looking each CheckKind up in
+      // the description/severity maps with a null-assert. A kind missing from
+      // either map (e.g. a check added by a later feature) makes `render` throw
+      // on every run. Asserting the contract per kind catches that the moment a
+      // new CheckKind is introduced without a catalogue entry.
+      final rules = arr(theDriver([located])['rules']);
+      final byId = {
+        for (final raw in rules) obj(raw)['id']! as String: obj(raw),
+      };
+      const levels = {'error', 'warning', 'note'};
+      for (final kind in CheckKind.values) {
+        final rule = byId[kind.id];
+        expect(rule, isNotNull, reason: 'no rule emitted for ${kind.id}');
+        final text = obj(rule!['shortDescription'])['text'];
+        expect(text, isA<String>(), reason: '${kind.id} shortDescription.text');
+        expect((text! as String).trim(), isNotEmpty,
+            reason: '${kind.id} shortDescription.text is blank');
+        final level = obj(rule['defaultConfiguration'])['level'];
+        expect(levels, contains(level),
+            reason: '${kind.id} defaultConfiguration.level');
+      }
+    });
+
     test('declares one rule per CheckKind with id, name and a level', () {
       final rules = arr(theDriver([located])['rules']);
       expect(rules, hasLength(CheckKind.values.length));
