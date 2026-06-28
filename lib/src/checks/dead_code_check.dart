@@ -1,7 +1,6 @@
-// dallow targets the stable legacy Element model (see code_graph.dart); the
-// Element2 migration is deferred package-wide, so the element subtype checks
-// below intentionally use the legacy classes.
-// ignore_for_file: deprecated_member_use
+// dallow targets analyzer's unified element model (analyzer >= 14); the element
+// subtype checks below use the current `GetterElement`/`SetterElement` split and
+// read inheritance annotations through `Element.metadata`.
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:dallow/src/finding.dart';
@@ -128,7 +127,7 @@ class DeadCodeCheck {
       final element = node.element;
       if (_hasInheritanceAnnotation(element)) participants.add(node);
 
-      final enclosing = element.enclosingElement3;
+      final enclosing = element.enclosingElement;
       final name = element.name;
       if (enclosing is! InterfaceElement || name == null) continue;
 
@@ -147,11 +146,11 @@ class DeadCodeCheck {
   }
 
   bool _hasInheritanceAnnotation(Element e) =>
-      e.hasOverride ||
-      e.hasProtected ||
-      e.hasVisibleForTesting ||
-      e.hasVisibleForOverriding ||
-      e.hasMustBeOverridden;
+      e.metadata.hasOverride ||
+      e.metadata.hasProtected ||
+      e.metadata.hasVisibleForTesting ||
+      e.metadata.hasVisibleForOverriding ||
+      e.metadata.hasMustBeOverridden;
 
   /// Looks up a member named [name] declared directly on [type], matching the
   /// kind of [reference] (method/getter/setter/field).
@@ -161,9 +160,8 @@ class DeadCodeCheck {
     Element reference,
   ) {
     if (reference is MethodElement) return type.getMethod(name);
-    if (reference is PropertyAccessorElement) {
-      return reference.isSetter ? type.getSetter(name) : type.getGetter(name);
-    }
+    if (reference is GetterElement) return type.getGetter(name);
+    if (reference is SetterElement) return type.getSetter(name);
     if (reference is FieldElement) {
       return type.getField(name) ?? type.getGetter(name);
     }
@@ -190,9 +188,8 @@ class DeadCodeCheck {
 
   String _describeMember(CodeNode node) {
     final element = node.element;
-    if (element is PropertyAccessorElement) {
-      return element.isSetter ? 'setter' : 'getter';
-    }
+    if (element is GetterElement) return 'getter';
+    if (element is SetterElement) return 'setter';
     if (element is FieldElement) return 'field';
     return 'method';
   }
