@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 - 2026-06-28
+
+- Dependencies: upgrade `analyzer` from `^7.0.0` to `^14.0.0`. This migrates the
+  symbol graph and dead-code check off the legacy element model onto analyzer's
+  unified `Element`/`Fragment` API: source locations and the synthetic-property
+  distinction now come from fragments (`firstFragment`, `isOriginDeclaration`),
+  declaration nodes are resolved via `declaredFragment` rather than
+  `declaredElement`, and `ClassDeclaration`/`EnumDeclaration` names are read from
+  their `namePart`. Behaviour is unchanged — all checks produce identical
+  findings. No CLI or output changes.
+
 ## 0.2.1 - 2026-06-25
 
 - Packaging: add an `example/` (CLI usage walkthrough) and a `.pubignore` that

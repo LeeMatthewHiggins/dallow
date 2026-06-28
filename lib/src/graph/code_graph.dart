@@ -1,7 +1,8 @@
-// The analyzer is mid-migration to the Element2 API. dallow targets the
-// stable legacy Element model, which still resolves cleanly across the
-// supported SDK range. Revisit when Element2 stabilises.
-// ignore_for_file: deprecated_member_use
+// dallow targets analyzer's unified element model (analyzer >= 14): the legacy
+// `Element`/`Element2` split has collapsed back into a single `Element` model
+// with a parallel `Fragment` tree. Source locations and `isSynthetic` now live
+// on fragments; declaration nodes expose `declaredFragment` rather than
+// `declaredElement`.
 
 import 'dart:io';
 
@@ -227,14 +228,14 @@ class CodeGraph {
   /// `show`/`hide` combinators without re-implementing combinator logic.
   void _registerExportedApi(ResolvedUnitResult result) {
     final library = result.libraryElement;
-    if (library.source.fullName != result.path) return;
+    if (library.firstFragment.source.fullName != result.path) return;
 
     final relativePath = p.relative(result.path, from: rootPath);
     final isUnderLib = _isUnder(relativePath, 'lib');
     final isUnderLibSrc = _isUnder(relativePath, p.join('lib', 'src'));
     if (!isUnderLib || isUnderLibSrc) return;
 
-    for (final element in library.exportNamespace.definedNames.values) {
+    for (final element in library.exportNamespace.definedNames2.values) {
       final node = ownerOf(element);
       if (node != null) _exportedApi.add(node);
     }
@@ -247,10 +248,11 @@ class CodeGraph {
     final isConsumerFile = !isUnderLib;
 
     for (final element in _topLevelElements(result.libraryElement)) {
+      final fragment = element.firstFragment;
       final name = element.name;
       if (name == null || name.isEmpty) continue;
-      if (element.isSynthetic) continue;
-      if (result.path != element.source?.fullName) continue;
+      if (_isSyntheticProperty(element)) continue;
+      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       final isPrivate = name.startsWith('_');
       final node = CodeNode(
@@ -258,7 +260,7 @@ class CodeGraph {
         name: name,
         absolutePath: result.path,
         relativePath: relativePath,
-        line: _lineOf(result, element.nameOffset),
+        line: _lineOf(result, fragment.nameOffset),
         isPrivate: isPrivate,
         isUnderLibSrc: isUnderLibSrc,
         isConsumerFile: isConsumerFile,
@@ -301,23 +303,28 @@ class CodeGraph {
     final members = <Element>[
       ...type.methods,
       ...type.fields.where(
-        (f) => !f.isSynthetic && !f.isEnumConstant && f != representation,
+        (f) =>
+            !_isSyntheticProperty(f) &&
+            !f.isEnumConstant &&
+            f != representation,
       ),
-      ...type.accessors.where((a) => !a.isSynthetic),
+      ...type.getters.where((a) => !_isSyntheticProperty(a)),
+      ...type.setters.where((a) => !_isSyntheticProperty(a)),
     ];
 
     for (final element in members) {
+      final fragment = element.firstFragment;
       final name = element.name;
       if (name == null || name.isEmpty) continue;
-      if (element.isSynthetic) continue;
-      if (result.path != element.source?.fullName) continue;
+      if (_isSyntheticProperty(element)) continue;
+      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       _memberNodes[element] = CodeNode(
         element: element,
         name: name,
         absolutePath: result.path,
         relativePath: relativePath,
-        line: _lineOf(result, element.nameOffset),
+        line: _lineOf(result, fragment.nameOffset),
         isPrivate: name.startsWith('_'),
         isUnderLibSrc: isUnderLibSrc,
         isConsumerFile: isConsumerFile,
@@ -342,11 +349,11 @@ class CodeGraph {
     final library = result.libraryElement;
     final edges = imports.putIfAbsent(from, () => {});
     final targets = <LibraryElement>[
-      ...library.importedLibraries,
+      ...library.fragments.expand((fragment) => fragment.importedLibraries),
       ...library.exportedLibraries,
     ];
     for (final target in targets) {
-      final resolved = target.source.fullName;
+      final resolved = target.firstFragment.source.fullName;
       if (resolved != from && p.isWithin(rootPath, resolved)) {
         edges.add(resolved);
       }
@@ -359,8 +366,8 @@ class CodeGraph {
   /// writing a field resolves to the field's node.
   CodeNode? memberNodeOf(Element? element) {
     var current = element;
-    if (current is PropertyAccessorElement && current.isSynthetic) {
-      current = current.variable2;
+    if (current is PropertyAccessorElement && _isSyntheticProperty(current)) {
+      current = current.variable;
     }
     if (current == null) return null;
     return _memberNodes[current];
@@ -371,42 +378,49 @@ class CodeGraph {
   CodeNode? ownerOf(Element? element) {
     var current = element;
     while (current != null) {
-      if (current is PropertyAccessorElement && current.isSynthetic) {
-        final variable = current.variable2;
-        if (variable == null) break;
-        current = variable;
+      if (current is PropertyAccessorElement && _isSyntheticProperty(current)) {
+        current = current.variable;
         continue;
       }
       final node = _nodes[current];
       if (node != null) return node;
-      final enclosing = current.enclosingElement3;
-      if (enclosing is CompilationUnitElement || enclosing == null) break;
+      final enclosing = current.enclosingElement;
+      if (enclosing is LibraryElement || enclosing == null) break;
       current = enclosing;
     }
     return null;
   }
 
-  Iterable<Element> _topLevelElements(LibraryElement library) sync* {
-    for (final unit in library.units) {
-      yield* unit.functions;
-      yield* unit.classes;
-      yield* unit.enums;
-      yield* unit.mixins;
-      yield* unit.extensions;
-      // The enumeration API carries an experimental annotation, but extension
-      // types are a stable language feature; this is the way to list them.
-      // ignore: experimental_member_use
-      yield* unit.extensionTypes;
-      yield* unit.typeAliases;
-      yield* unit.topLevelVariables;
-      for (final accessor in unit.accessors) {
-        if (!accessor.isSynthetic) yield accessor;
-      }
-    }
+  /// Whether [element] is an implicitly-induced property: the synthetic getter
+  /// or setter of a variable, or the synthetic backing variable of an explicit
+  /// getter/setter. The unified model has no blanket `isSynthetic` flag, so the
+  /// induced-vs-declared distinction is read from `isOriginDeclaration`.
+  static bool _isSyntheticProperty(Element element) {
+    if (element is PropertyAccessorElement) return !element.isOriginDeclaration;
+    if (element is PropertyInducingElement) return !element.isOriginDeclaration;
+    return false;
   }
 
-  int _lineOf(ResolvedUnitResult result, int offset) {
-    if (offset < 0) return 0;
+  Iterable<Element> _topLevelElements(LibraryElement library) sync* {
+    // The unified element model exposes top-level declarations directly on the
+    // library, merged across its fragments. Synthetic accessors that back a
+    // top-level variable are filtered out at registration via
+    // `_isSyntheticProperty`, so getters and setters can be yielded wholesale
+    // here.
+    yield* library.topLevelFunctions;
+    yield* library.classes;
+    yield* library.enums;
+    yield* library.mixins;
+    yield* library.extensions;
+    yield* library.extensionTypes;
+    yield* library.typeAliases;
+    yield* library.topLevelVariables;
+    yield* library.getters;
+    yield* library.setters;
+  }
+
+  int _lineOf(ResolvedUnitResult result, int? offset) {
+    if (offset == null || offset < 0) return 0;
     return result.lineInfo.getLocation(offset).lineNumber;
   }
 
@@ -435,57 +449,65 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitFunctionDeclaration(FunctionDeclaration node) {
     _withOwner(
-      node.declaredElement,
+      node.declaredFragment?.element,
       () => super.visitFunctionDeclaration(node),
     );
   }
 
   @override
   void visitClassDeclaration(ClassDeclaration node) {
-    _withOwner(node.declaredElement, () => super.visitClassDeclaration(node));
+    _withOwner(node.declaredFragment?.element,
+        () => super.visitClassDeclaration(node));
   }
 
   @override
   void visitEnumDeclaration(EnumDeclaration node) {
-    _withOwner(node.declaredElement, () => super.visitEnumDeclaration(node));
+    _withOwner(
+        node.declaredFragment?.element, () => super.visitEnumDeclaration(node));
   }
 
   @override
   void visitMixinDeclaration(MixinDeclaration node) {
-    _withOwner(node.declaredElement, () => super.visitMixinDeclaration(node));
+    _withOwner(node.declaredFragment?.element,
+        () => super.visitMixinDeclaration(node));
   }
 
   @override
   void visitExtensionDeclaration(ExtensionDeclaration node) {
     _withOwner(
-      node.declaredElement,
+      node.declaredFragment?.element,
       () => super.visitExtensionDeclaration(node),
     );
   }
 
   @override
   void visitGenericTypeAlias(GenericTypeAlias node) {
-    _withOwner(node.declaredElement, () => super.visitGenericTypeAlias(node));
+    _withOwner(node.declaredFragment?.element,
+        () => super.visitGenericTypeAlias(node));
   }
 
   @override
   void visitFunctionTypeAlias(FunctionTypeAlias node) {
-    _withOwner(node.declaredElement, () => super.visitFunctionTypeAlias(node));
+    _withOwner(node.declaredFragment?.element,
+        () => super.visitFunctionTypeAlias(node));
   }
 
   @override
   void visitMethodDeclaration(MethodDeclaration node) {
     // Covers methods, operators and explicit getters/setters.
-    _withOwner(node.declaredElement, () => super.visitMethodDeclaration(node));
+    _withOwner(node.declaredFragment?.element,
+        () => super.visitMethodDeclaration(node));
   }
 
   @override
   void visitFieldDeclaration(FieldDeclaration node) {
     final variables = node.fields.variables;
-    final first = variables.isEmpty ? null : variables.first.declaredElement;
+    final first =
+        variables.isEmpty ? null : variables.first.declaredFragment?.element;
     _withOwner(first, () => node.fields.type?.accept(this));
     for (final variable in variables) {
-      _withOwner(variable.declaredElement, () => variable.accept(this));
+      _withOwner(
+          variable.declaredFragment?.element, () => variable.accept(this));
     }
   }
 
@@ -493,7 +515,7 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   void visitFieldFormalParameter(FieldFormalParameter node) {
     // `MyClass(this.x)` initialises field `x`; treat it as a use so a field
     // only ever set through a constructor is not reported as dead.
-    final element = node.declaredElement;
+    final element = node.declaredFragment?.element;
     if (element is FieldFormalParameterElement) _record(element.field);
     super.visitFieldFormalParameter(node);
   }
@@ -502,7 +524,7 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   void visitSuperFormalParameter(SuperFormalParameter node) {
     // `MyClass(super.x)` forwards to a superclass field formal; keep that
     // field alive too.
-    final element = node.declaredElement;
+    final element = node.declaredFragment?.element;
     if (element is SuperFormalParameterElement) {
       final forwarded = element.superConstructorParameter;
       if (forwarded is FieldFormalParameterElement) _record(forwarded.field);
@@ -513,16 +535,18 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
     final variables = node.variables.variables;
-    final first = variables.isEmpty ? null : variables.first.declaredElement;
+    final first =
+        variables.isEmpty ? null : variables.first.declaredFragment?.element;
     _withOwner(first, () => node.variables.type?.accept(this));
     for (final variable in variables) {
-      _withOwner(variable.declaredElement, () => variable.accept(this));
+      _withOwner(
+          variable.declaredFragment?.element, () => variable.accept(this));
     }
   }
 
   @override
   void visitSimpleIdentifier(SimpleIdentifier node) {
-    _record(node.staticElement);
+    _record(node.element);
     super.visitSimpleIdentifier(node);
   }
 
@@ -616,9 +640,11 @@ class _ComplexityCollector extends RecursiveAstVisitor<void> {
   String? _enclosingTypeName(AstNode node) {
     var current = node.parent;
     while (current != null) {
-      if (current is ClassDeclaration) return current.name.lexeme;
+      // `ClassDeclaration`/`EnumDeclaration` moved their name token onto a
+      // `namePart` in the unified AST; mixins and extensions keep `name`.
+      if (current is ClassDeclaration) return current.namePart.typeName.lexeme;
       if (current is MixinDeclaration) return current.name.lexeme;
-      if (current is EnumDeclaration) return current.name.lexeme;
+      if (current is EnumDeclaration) return current.namePart.typeName.lexeme;
       if (current is ExtensionDeclaration) {
         return current.name?.lexeme ?? '<extension>';
       }
