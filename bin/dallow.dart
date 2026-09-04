@@ -84,6 +84,14 @@ abstract class _CheckCommand extends Command<int> {
             'directive). Off by default to keep output quiet.',
       )
       ..addFlag(
+        'allow-unresolved',
+        negatable: false,
+        help: 'Analyse even when some files or imports could not be resolved '
+            '(normally a missing `pub get`). The gaps are reported as '
+            'unresolved-source warnings instead of aborting; dead-code and '
+            'circular-import results may be wrong in their vicinity.',
+      )
+      ..addFlag(
         'recursive',
         abbr: 'r',
         negatable: false,
@@ -173,6 +181,7 @@ abstract class _CheckCommand extends Command<int> {
       );
     }
 
+    final allowUnresolved = argResults!['allow-unresolved'] as bool;
     final List<Finding> findings;
     try {
       findings = recursive
@@ -182,6 +191,7 @@ abstract class _CheckCommand extends Command<int> {
               maxCycleSize: maxCycleSize,
               minBlockSize: minBlockSize,
               maxComplexity: maxComplexity,
+              allowUnresolved: allowUnresolved,
               discovery: discovery,
             )
           : await analyze(
@@ -190,10 +200,14 @@ abstract class _CheckCommand extends Command<int> {
               maxCycleSize: maxCycleSize,
               minBlockSize: minBlockSize,
               maxComplexity: maxComplexity,
+              allowUnresolved: allowUnresolved,
             );
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;
+    } on UnresolvedSourceException catch (e) {
+      stderr.writeln(e.message);
+      return 78;
     }
 
     // --write-baseline short-circuits the gate: capture all current findings

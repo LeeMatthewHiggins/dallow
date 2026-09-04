@@ -8,7 +8,8 @@ enum CheckKind {
   duplicateCode('duplicate-code'),
   highComplexity('high-complexity'),
   projectHealth('project-health'),
-  unusedIgnore('unused-ignore');
+  unusedIgnore('unused-ignore'),
+  unresolvedSource('unresolved-source');
 
   const CheckKind(this.id);
 
@@ -35,6 +36,7 @@ class Finding {
     this.line,
     this.symbol,
     this.package,
+    this.weight = 1,
   });
 
   final CheckKind kind;
@@ -54,6 +56,13 @@ class Finding {
   /// output unchanged.
   final String? package;
 
+  /// How much this finding counts towards the project health score, relative
+  /// to a plain finding of its severity. Most findings weigh 1; a duplicated
+  /// block weighs its size in multiples of the minimum reportable block, so
+  /// a copied 800-token function costs far more than a repeated import line.
+  /// Not part of the serialised output.
+  final double weight;
+
   /// Returns a copy of this finding attributed to [package].
   Finding withPackage(String package) => Finding(
         kind: kind,
@@ -63,6 +72,7 @@ class Finding {
         line: line,
         symbol: symbol,
         package: package,
+        weight: weight,
       );
 
   Map<String, Object?> toJson() => {

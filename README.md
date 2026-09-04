@@ -16,10 +16,10 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 
 | Check | What it finds |
 | --- | --- |
-| **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) **and class members** (methods, getters/setters, fields) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol, or a public member of a public-API class, is never flagged as dead. Members reached through inheritance (an `@override`, an interface implementation, or a member overridden by a subtype) are kept, since they may be dispatched dynamically; a field initialised through a `this.x` constructor parameter counts as used. |
+| **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) **and class members** (methods, getters/setters, fields) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol, or a public member of a public-API class, is never flagged as dead. Members reached through inheritance (an `@override`, an interface implementation, or a member overridden by a subtype) are kept, since they may be dispatched dynamically; a field initialised through a `this.x` constructor parameter counts as used. A conditional `import`/`export` (`if (dart.library.io) …`) keeps every alternate reachable whenever its default branch is, so platform-specific implementations are never reported dead. |
 | **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
-| **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. |
+| **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. Directives (`import`, `export`, `part`, `library`) are skipped, so files that share an import header are not reported as duplicating each other. |
 | **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits an info-level project health score. |
 
 ## Install
@@ -60,6 +60,7 @@ dallow complexity [path]   # only complexity metrics and health score
 | `--changed-since <ref>` | Only report findings in files changed since a git ref (the merge-base of `<ref>...HEAD`) — see [PR gate](#pr-gate) | off |
 | `--baseline <file>` | Suppress findings recorded in a baseline file, so the gate fails only on findings introduced after it was written | off |
 | `--write-baseline <file>` | Write the current findings to `<file>` as a baseline and exit `0`, instead of gating | off |
+| `--allow-unresolved` | Analyse even when a file or an internal import could not be resolved (normally a missing `pub get`), reporting each gap as an `unresolved-source` warning instead of exiting `78` — see [Exit codes](#exit-codes) | off |
 | `--report-unused-ignores` | Emit an info-level `unused-ignore` finding for every `dallow-ignore` comment that suppressed nothing — see [Inline suppression](#inline-suppression-dallow-ignore) | off |
 
 These options apply to every subcommand (`analyze`, `dead-code`, `deps`,
@@ -106,6 +107,7 @@ findings carry a `package` field. The exit code honours `--fail-on` evaluated
 | `1` | Findings at or above the `--fail-on` threshold |
 | `64` | Usage error (bad directory, bad `--max-cycle-size`, an unknown `--changed-since` ref, a non-git work tree, or an unreadable baseline) |
 | `69` | No Dart SDK could be located to back the analyzer |
+| `78` | A source file or an internal import (relative, or `package:<this package>/…`) could not be resolved — usually `pub get` has not been run. Reachability results from such a graph would be silently wrong, so dallow refuses unless `--allow-unresolved` is passed |
 
 This makes dallow a CI gate:
 
@@ -253,9 +255,14 @@ In a GitHub Actions workflow, upload the file with
    cyclomatic complexity. The health score is:
    `clamp(0, 100, 100 - complexityPenalty - findingsPenalty)`, where
    `complexityPenalty = min(60, round(sum(max(0, complexity - maxComplexity)) / functionCount * 3))`
-   and `findingsPenalty = min(40, round((2 * errors + warnings + 0.25 * info) / max(functionCount, 1) * 5))`
-   across the other enabled checks. Complexity and health findings themselves
-   are excluded from the findings-density penalty.
+   and `findingsPenalty = min(40, round(weightedFindings / max(functionCount, 1) * 5))`
+   with `weightedFindings = sum(severityWeight * findingWeight)` across the
+   other enabled checks — `severityWeight` is 2 for an error, 1 for a warning
+   and 0.25 for an info, and `findingWeight` is 1 for every finding except a
+   duplicated block, which weighs `blockTokens / minBlockSize` so a copied
+   800-token function costs forty times a repeated 20-token line. The health
+   message reports the weighted total so the score can be traced. Complexity,
+   health and `unresolved-source` findings are excluded from the penalty.
 7. The same token stream is read for `dallow-ignore` comments, which suppress
    matching findings before the gate runs.
 

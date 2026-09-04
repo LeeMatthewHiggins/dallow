@@ -112,6 +112,7 @@ const _ruleSeverities = <CheckKind, Severity>{
   CheckKind.highComplexity: Severity.warning,
   CheckKind.projectHealth: Severity.info,
   CheckKind.unusedIgnore: Severity.info,
+  CheckKind.unresolvedSource: Severity.warning,
 };
 
 /// A one-line `shortDescription` for each rule in the driver catalogue.
@@ -127,6 +128,9 @@ const _ruleDescriptions = <CheckKind, String>{
   CheckKind.duplicateCode: 'A duplicated block of Dart tokens.',
   CheckKind.highComplexity:
       'A function whose cyclomatic complexity exceeds the threshold.',
+  CheckKind.unresolvedSource:
+      'A file or internal import the analyzer could not resolve, leaving a '
+          'hole in the symbol graph.',
   CheckKind.projectHealth: 'An aggregate project-health score (0–100).',
   CheckKind.unusedIgnore: 'A dallow-ignore directive that suppressed nothing.',
 };

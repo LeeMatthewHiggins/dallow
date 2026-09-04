@@ -8,6 +8,33 @@ import 'package:dallow/src/graph/code_graph.dart';
 import 'package:dallow/src/workspace/package_discovery.dart';
 import 'package:path/path.dart' as p;
 
+/// Thrown when the symbol graph has holes — files or directives the analyzer
+/// could not resolve — and the caller has not opted in to analysing anyway.
+/// Reachability results from such a graph are confidently wrong, so refusing
+/// is the safe default.
+class UnresolvedSourceException implements Exception {
+  UnresolvedSourceException(this.problems);
+
+  final List<ResolutionProblem> problems;
+
+  static const _maxListed = 5;
+
+  String get message {
+    final listed = problems.take(_maxListed).map((p) => '  $p').join('\n');
+    final more = problems.length > _maxListed
+        ? '\n  (+${problems.length - _maxListed} more)'
+        : '';
+    return 'Could not resolve ${problems.length} source location(s); '
+        'dead-code and import results would be unreliable:\n$listed$more\n'
+        'Run `dart pub get` (or `flutter pub get`) in the package first. '
+        'To analyse anyway and report the gaps as findings, pass '
+        '--allow-unresolved.';
+  }
+
+  @override
+  String toString() => message;
+}
+
 /// The set of checks dallow knows how to run.
 enum Check {
   deadCode,
@@ -36,12 +63,19 @@ Future<List<Finding>> analyze(
   int? maxCycleSize,
   int? minBlockSize,
   int? maxComplexity,
+  bool allowUnresolved = false,
 }) async {
   final findings = <Finding>[];
   ComplexityResult? complexityResult;
 
   if (checks.any((c) => c.needsGraph)) {
     final graph = await CodeGraph.build(rootPath);
+    if (graph.resolutionProblems.isNotEmpty) {
+      if (!allowUnresolved) {
+        throw UnresolvedSourceException(graph.resolutionProblems);
+      }
+      findings.addAll(graph.resolutionProblems.map(_unresolvedFinding));
+    }
     if (checks.contains(Check.deadCode)) {
       findings.addAll(const DeadCodeCheck().run(graph));
     }
@@ -73,7 +107,8 @@ Future<List<Finding>> analyze(
         otherFindings: findings.where(
           (f) =>
               f.kind != CheckKind.highComplexity &&
-              f.kind != CheckKind.projectHealth,
+              f.kind != CheckKind.projectHealth &&
+              f.kind != CheckKind.unresolvedSource,
         ),
       ),
     );
@@ -81,6 +116,15 @@ Future<List<Finding>> analyze(
 
   return findings;
 }
+
+Finding _unresolvedFinding(ResolutionProblem problem) => Finding(
+      kind: CheckKind.unresolvedSource,
+      severity: Severity.warning,
+      message: 'Unresolved source (${problem.message}); dead-code and '
+          'circular-import findings that depend on it may be wrong.',
+      file: problem.relativePath,
+      line: problem.line,
+    );
 
 /// Runs [analyze] against every member package discovered under [root] and
 /// returns the aggregated findings, each tagged (via [Finding.withPackage])
@@ -105,6 +149,7 @@ Future<List<Finding>> analyzeWorkspace(
   int? maxCycleSize,
   int? minBlockSize,
   int? maxComplexity,
+  bool allowUnresolved = false,
   WorkspaceDiscovery? discovery,
 }) async {
   final normalisedRoot = p.normalize(p.absolute(root));
@@ -118,6 +163,7 @@ Future<List<Finding>> analyzeWorkspace(
       maxCycleSize: maxCycleSize,
       minBlockSize: minBlockSize,
       maxComplexity: maxComplexity,
+      allowUnresolved: allowUnresolved,
     );
     final relative = p.relative(packageRoot, from: normalisedRoot);
     final label = relative == '.' ? '.' : p.split(relative).join('/');

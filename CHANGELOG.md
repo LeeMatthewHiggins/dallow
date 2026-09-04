@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Dead code: refuse to analyse a package whose own source cannot be resolved —
+  a file the analyzer returns no resolved unit for, or a relative /
+  `package:<this package>/` import it cannot find (normally a missing
+  `pub get`). Such a hole silently dropped every symbol behind it and produced
+  pages of confident false positives; dallow now exits `78` naming the first
+  gaps, or with `--allow-unresolved` continues and reports each gap as an
+  `unresolved-source` warning. Missing third-party packages are unaffected —
+  they remain the dependency check's `missing-dependency` finding (#23).
+- Dead code: the alternates of a conditional `import`/`export`
+  (`if (dart.library.io) …`) are reachable whenever the default branch is, so
+  platform-specific implementations are no longer reported dead (#24).
+- Duplication: directives are excluded from the token stream, so files that
+  merely share an import header no longer match each other. On a 17k-line
+  package this removed 400+ of 928 findings, all noise (#15).
+- Health score: a duplicated block now weighs `tokens / minBlockSize` instead
+  of 1, so a copied function counts for far more than a repeated line, and the
+  health message reports the weighted total it was computed from (#25).
+
 ## 0.3.0 - 2026-06-28
 
 - Dependencies: upgrade `analyzer` from `^7.0.0` to `^14.0.0`. This migrates the
