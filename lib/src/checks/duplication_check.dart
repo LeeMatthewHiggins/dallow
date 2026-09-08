@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/util/dart_files.dart';
@@ -65,7 +66,7 @@ class DuplicationCheck {
       accepted.addAll(
         occurrences.map((o) => _Range(o.index, o.index + candidate.length)),
       );
-      findings.add(_findingFor(occurrences, candidate.length));
+      findings.add(_findingFor(occurrences, candidate.length, blockSize));
     }
 
     findings.sort((a, b) {
@@ -76,7 +77,11 @@ class DuplicationCheck {
     return findings;
   }
 
-  Finding _findingFor(List<_Occurrence> occurrences, int length) {
+  Finding _findingFor(
+    List<_Occurrence> occurrences,
+    int length,
+    int blockSize,
+  ) {
     final first = occurrences.first;
     final locations = occurrences
         .map((o) => '${o.file}:${o.line}')
@@ -88,6 +93,7 @@ class DuplicationCheck {
       message: 'Duplicated code block ($length tokens) at $locations.',
       file: first.file,
       line: first.line,
+      weight: length / blockSize,
     );
   }
 
@@ -152,9 +158,35 @@ class DuplicationCheck {
       throwIfDiagnostics: false,
     );
 
+    // Directives are excluded: two files that import the same packages are
+    // not duplicating each other, and with URIs normalised to `<string>`
+    // every import header would otherwise match every other.
+    final directives = parsed.unit.directives
+        .map((directive) => _Range(directive.offset, directive.end))
+        .toList(growable: false);
+    // A block that straddles two declarations — the tail of one function
+    // and the head of the next — is not a duplicate anyone would extract, so
+    // every declaration and member starts with a token unique to it, which
+    // no other sequence can match across.
+    final boundaries = _declarationStarts(parsed.unit);
+
     final result = <_LexToken>[];
     Token? token = parsed.unit.beginToken;
     while (token != null && !token.isEof) {
+      if (_inside(token.offset, directives)) {
+        token = token.next;
+        continue;
+      }
+      if (boundaries.contains(token.offset)) {
+        result.add(
+          _LexToken(
+            '<decl:$relativePath:${token.offset}>',
+            relativePath,
+            parsed.lineInfo.getLocation(token.offset).lineNumber,
+            token.offset,
+          ),
+        );
+      }
       result.add(
         _LexToken(
           _normalise(token),
@@ -188,6 +220,32 @@ class DuplicationCheck {
   }
 
   String _sentinel(String path) => '<file:${p.normalize(path)}>';
+
+  Set<int> _declarationStarts(CompilationUnit unit) {
+    final starts = <int>{};
+    for (final declaration in unit.declarations) {
+      starts.add(declaration.offset);
+      final members = switch (declaration) {
+        ClassDeclaration() => declaration.body.members,
+        MixinDeclaration() => declaration.body.members,
+        EnumDeclaration() => declaration.body.members,
+        ExtensionDeclaration() => declaration.body.members,
+        ExtensionTypeDeclaration() => declaration.body.members,
+        _ => const <ClassMember>[],
+      };
+      for (final member in members) {
+        starts.add(member.offset);
+      }
+    }
+    return starts;
+  }
+
+  bool _inside(int offset, List<_Range> ranges) {
+    for (final range in ranges) {
+      if (range.contains(offset)) return true;
+    }
+    return false;
+  }
 
   bool _isCovered(_Candidate candidate, List<_Range> accepted) {
     for (final range in accepted) {

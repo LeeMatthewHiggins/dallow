@@ -1,0 +1,7 @@
+name: unresolved
+description: Fixture whose own import cannot be resolved (no pub get).
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

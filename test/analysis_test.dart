@@ -1,4 +1,5 @@
 import 'package:dallow/dallow.dart';
+import 'package:dallow/src/checks/complexity_check.dart' show ComplexityResult;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -10,7 +11,11 @@ void main() {
     late Set<String?> symbols;
 
     setUpAll(() async {
-      findings = await analyze(fixture, checks: {Check.deadCode});
+      findings = await analyze(
+        fixture,
+        checks: {Check.deadCode},
+        allowUnresolved: true,
+      );
       symbols = findings.map((f) => f.symbol).toSet();
     });
 
@@ -43,6 +48,17 @@ void main() {
       expect(dead.message, contains('function'));
     });
 
+    test('does not flag the alternates of a conditional import', () {
+      final inAlternate = findings.where(
+        (f) => f.file == 'lib/src/platform_io.dart',
+      );
+      expect(inAlternate.map((f) => f.symbol), isNot(contains('platformName')));
+    });
+
+    test('still flags a symbol only an alternate declares', () {
+      expect(symbols, contains('ioOnlyHelper'));
+    });
+
     test('flags a dead extension type and labels it', () {
       expect(symbols, contains('DeadId'));
       final dead = findings.firstWhere((f) => f.symbol == 'DeadId');
@@ -55,7 +71,11 @@ void main() {
     late Set<String?> symbols;
 
     setUpAll(() async {
-      findings = await analyze(fixture, checks: {Check.deadCode});
+      findings = await analyze(
+        fixture,
+        checks: {Check.deadCode},
+        allowUnresolved: true,
+      );
       symbols = findings.map((f) => f.symbol).toSet();
     });
 
@@ -163,8 +183,18 @@ void main() {
   });
 
   group('circular-import check', () {
+    Future<List<Finding>> cycles(int? maxCycleSize) async {
+      final findings = await analyze(
+        fixture,
+        checks: {Check.circularImports},
+        maxCycleSize: maxCycleSize,
+        allowUnresolved: true,
+      );
+      return findings.where((f) => f.kind == CheckKind.circularImport).toList();
+    }
+
     test('detects a mutual dependency cycle', () async {
-      final findings = await analyze(fixture, checks: {Check.circularImports});
+      final findings = await cycles(null);
 
       expect(findings, isNotEmpty);
       expect(
@@ -178,28 +208,14 @@ void main() {
     });
 
     test('skips cycles larger than maxCycleSize', () async {
-      final findings = await analyze(
-        fixture,
-        checks: {Check.circularImports},
-        maxCycleSize: 1,
-      );
-
-      expect(findings, isEmpty);
+      expect(await cycles(1), isEmpty);
     });
 
     test('reports a cycle exactly at maxCycleSize (boundary)', () async {
       // The fixture cycle is 2 files: skipped at 1, reported at 2 — pinning
       // the `>` (not `>=`) comparison.
-      final atTwo = await analyze(
-        fixture,
-        checks: {Check.circularImports},
-        maxCycleSize: 2,
-      );
-      final atOne = await analyze(
-        fixture,
-        checks: {Check.circularImports},
-        maxCycleSize: 1,
-      );
+      final atTwo = await cycles(2);
+      final atOne = await cycles(1);
 
       expect(atTwo, isNotEmpty);
       expect(atOne, isEmpty);
@@ -224,6 +240,18 @@ void main() {
       expect(finding.line, 1);
       expect(finding.message, contains('lib/duplicated.dart:1'));
       expect(finding.message, contains('lib/duplicated.dart:10'));
+    });
+
+    test('does not report shared import headers as duplication', () async {
+      final findings = await analyze(
+        duplicationFixture,
+        checks: {Check.duplication},
+      );
+
+      final inHeaders = findings.where(
+        (f) => f.file!.startsWith('lib/imports_'),
+      );
+      expect(inHeaders, isEmpty);
     });
 
     test('does not report a non-duplicated file', () async {
@@ -348,13 +376,14 @@ void main() {
           Check.complexity,
         },
         maxComplexity: 10,
+        allowUnresolved: true,
       );
 
       final health = findings.singleWhere(
         (f) => f.kind == CheckKind.projectHealth,
       );
       expect(health.message, contains('Project health score: 97/100'));
-      expect(health.message, contains('24 function(s) analysed'));
+      expect(health.message, contains('27 function(s) analysed'));
       expect(health.message, contains('complexity penalty 0'));
       expect(health.message, contains('findings penalty 3'));
     });
@@ -428,6 +457,117 @@ void main() {
 
     test('console reports a clean run when empty', () {
       expect(Reporter(ReportFormat.console).render([]), contains('Clean'));
+    });
+  });
+
+  group('unresolved source guard', () {
+    final unresolvedFixture = p.absolute('test', 'fixtures', 'unresolved');
+
+    test('refuses to analyse when an internal import cannot be resolved',
+        () async {
+      await expectLater(
+        analyze(unresolvedFixture, checks: {Check.deadCode}),
+        throwsA(
+          isA<UnresolvedSourceException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains("import 'package:unresolved/src/missing.dart'"),
+              contains('lib/unresolved.dart'),
+              contains('--allow-unresolved'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('reports the gap as a finding when allowed to continue', () async {
+      final findings = await analyze(
+        unresolvedFixture,
+        checks: {Check.deadCode},
+        allowUnresolved: true,
+      );
+
+      final gaps = findings.where((f) => f.kind == CheckKind.unresolvedSource);
+      expect(gaps, hasLength(1));
+      expect(gaps.single.severity, Severity.warning);
+      expect(gaps.single.file, 'lib/unresolved.dart');
+      expect(gaps.single.line, 1);
+    });
+
+    test('does not treat an undeclared missing package as a hole', () async {
+      // lib/undeclared.dart imports a package that is neither declared nor
+      // resolvable; that is the dependency check's finding, not a gap, so the
+      // only gap reported is the internal import in lib/unresolved.dart.
+      final findings = await analyze(
+        unresolvedFixture,
+        checks: {Check.deadCode},
+        allowUnresolved: true,
+      );
+
+      final gaps = findings.where((f) => f.kind == CheckKind.unresolvedSource);
+      expect(gaps.map((f) => f.file), ['lib/unresolved.dart']);
+    });
+
+    test('treats a declared but unresolved dependency as a hole', () async {
+      // The sample fixture declares google_maps_flutter without a pub get.
+      await expectLater(
+        analyze(fixture, checks: {Check.circularImports}),
+        throwsA(
+          isA<UnresolvedSourceException>().having(
+            (e) => e.message,
+            'message',
+            contains("'google_maps_flutter' is declared in pubspec.yaml"),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('health score weighting', () {
+    ComplexityResult empty() => const ComplexityResult(
+          maxComplexity: defaultMaxComplexity,
+          functions: <FunctionComplexity>[],
+          findings: <Finding>[],
+        );
+
+    test('a large duplicate block costs more than a small one', () {
+      const small = Finding(
+        kind: CheckKind.duplicateCode,
+        severity: Severity.warning,
+        message: 'small',
+      );
+      const large = Finding(
+        kind: CheckKind.duplicateCode,
+        severity: Severity.warning,
+        message: 'large',
+        weight: 40,
+      );
+
+      expect(empty().healthScore(otherFindings: [small]), 95);
+      expect(empty().healthScore(otherFindings: [large]), 60);
+    });
+
+    test('duplication findings carry their size as weight', () async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'duplication'),
+        checks: {Check.duplication},
+      );
+
+      final duplicate = findings.single;
+      expect(duplicate.weight, greaterThan(1));
+    });
+
+    test('the health message explains the weighted total', () async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'complexity'),
+        checks: {Check.complexity},
+      );
+
+      final health = findings.singleWhere(
+        (f) => f.kind == CheckKind.projectHealth,
+      );
+      expect(health.message, contains('weighted findings'));
     });
   });
 }

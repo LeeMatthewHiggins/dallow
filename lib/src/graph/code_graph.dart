@@ -8,11 +8,13 @@ import 'dart:io';
 
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:path/path.dart' as p;
+import 'package:pubspec_parse/pubspec_parse.dart';
 
 /// Thrown when no Dart SDK can be located to back the analyzer. dallow
 /// resolves the package against a real SDK, so one must be discoverable.
@@ -23,6 +25,31 @@ class SdkNotFoundException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// A hole in the symbol graph: a source file the analyzer could not resolve,
+/// or a directive inside one whose URI it could not find. Every symbol that
+/// is reachable only through that hole looks unreachable, so a graph with
+/// problems reports confidently-wrong dead code unless the caller opts in.
+class ResolutionProblem {
+  const ResolutionProblem({
+    required this.relativePath,
+    required this.message,
+    this.line,
+  });
+
+  /// Path relative to the analysed package root.
+  final String relativePath;
+
+  /// The line of the offending directive, or null when the whole file failed.
+  final int? line;
+
+  final String message;
+
+  @override
+  String toString() => line == null
+      ? '$relativePath: $message'
+      : '$relativePath:$line: $message';
 }
 
 /// Locates a Dart SDK root, or null if none can be found. Resolution order:
@@ -161,6 +188,12 @@ class CodeGraph {
 
   final Set<CodeNode> _exportedApi = {};
   final List<FunctionComplexity> _functions = [];
+  final List<ResolutionProblem> _resolutionProblems = [];
+
+  /// Files and directives the analyzer could not resolve while building this
+  /// graph. Non-empty means reachability results are untrustworthy.
+  List<ResolutionProblem> get resolutionProblems =>
+      List.unmodifiable(_resolutionProblems);
 
   Iterable<CodeNode> get nodes => _nodes.values;
 
@@ -208,7 +241,17 @@ class CodeGraph {
       final result = await context.currentSession.getResolvedUnit(path);
       if (result is ResolvedUnitResult) {
         resolvedUnits.add(result);
-        graph._registerDeclarations(result);
+        graph
+          .._registerDeclarations(result)
+          .._recordUnresolvedDirectives(result);
+      } else {
+        graph._resolutionProblems.add(
+          ResolutionProblem(
+            relativePath: p.relative(path, from: rootPath),
+            message: 'the analyzer returned ${result.runtimeType} instead of '
+                'a resolved unit',
+          ),
+        );
       }
     }
 
@@ -219,8 +262,170 @@ class CodeGraph {
         .._registerExportedApi(unit)
         .._registerComplexity(unit);
     }
+    for (final unit in resolvedUnits) {
+      await graph._registerConditionalAlternates(
+        unit,
+        collection.contextFor(unit.path).currentSession,
+      );
+    }
 
     return graph;
+  }
+
+  /// Records every import or export in [result] of this package's own code
+  /// that the analyzer could not resolve. Skipping such a directive silently
+  /// drops the whole subtree behind it from the graph, which is what turns a
+  /// missing `pub get` into a page of false dead-code findings.
+  ///
+  /// A hole is a relative URI, a `package:<this package>/` URI, or a package
+  /// that `pubspec.yaml` declares but the analyzer could not find — the
+  /// signature of a missing `pub get`, after which every class built on that
+  /// package resolves to nothing. A package that is imported but *not*
+  /// declared is the dependency check's `missing-dependency` finding, not a
+  /// hole, and a `dart:` library that fails to resolve is an SDK problem.
+  void _recordUnresolvedDirectives(ResolvedUnitResult result) {
+    final relativePath = p.relative(result.path, from: rootPath);
+    for (final directive in result.unit.directives) {
+      final resolved = switch (directive) {
+        ImportDirective() => directive.libraryImport?.importedLibrary,
+        ExportDirective() => directive.libraryExport?.exportedLibrary,
+        _ => null,
+      };
+      if (directive is! NamespaceDirective || resolved != null) continue;
+
+      final uri = directive.uri.stringValue;
+      if (uri == null) continue;
+      final reason = _holeReason(uri);
+      if (reason == null) continue;
+
+      final keyword = directive is ImportDirective ? 'import' : 'export';
+      _resolutionProblems.add(
+        ResolutionProblem(
+          relativePath: relativePath,
+          line: _lineOf(result, directive.offset),
+          message: "$keyword '$uri' could not be resolved ($reason)",
+        ),
+      );
+    }
+  }
+
+  /// Why an unresolved [uri] leaves a hole in the graph, or null when it does
+  /// not (an undeclared or `dart:` URI).
+  String? _holeReason(String uri) {
+    final parsed = Uri.tryParse(uri);
+    if (parsed == null) return null;
+    if (!parsed.hasScheme) return 'a file of this package';
+    if (parsed.scheme != 'package') return null;
+    final package = parsed.pathSegments.firstOrNull;
+    if (package == null) return null;
+    if (package == _pubspec?.name) return 'a file of this package';
+    if (_declaredDependencies.contains(package)) {
+      return "'$package' is declared in pubspec.yaml; run `pub get`";
+    }
+    return null;
+  }
+
+  late final Pubspec? _pubspec = _readPubspec();
+
+  late final Set<String> _declaredDependencies = {
+    ...?_pubspec?.dependencies.keys,
+    ...?_pubspec?.devDependencies.keys,
+  };
+
+  Pubspec? _readPubspec() {
+    final file = File(p.join(rootPath, 'pubspec.yaml'));
+    if (!file.existsSync()) return null;
+    try {
+      return Pubspec.parse(file.readAsStringSync());
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Makes the alternates of a conditional import or export reachable
+  /// whenever the default branch is.
+  ///
+  /// `import 'stub.dart' if (dart.library.io) 'io.dart';` resolves to
+  /// `stub.dart` for analysis, so nothing ever references the symbols in
+  /// `io.dart` even though that is the file that runs on the VM. The
+  /// alternates declare the same names by construction, so each top-level
+  /// name exported by an alternate is linked from the default library's
+  /// symbol of the same name; when the default is reachable, so is the
+  /// alternate. Only the symbol graph is touched — the file-level import
+  /// graph keeps the analyzer's view, so this cannot introduce cycles.
+  Future<void> _registerConditionalAlternates(
+    ResolvedUnitResult result,
+    AnalysisSession session,
+  ) async {
+    for (final directive in result.unit.directives) {
+      if (directive is! NamespaceDirective) continue;
+      if (directive.configurations.isEmpty) continue;
+
+      final defaultLibrary = switch (directive) {
+        ImportDirective() => directive.libraryImport?.importedLibrary,
+        ExportDirective() => directive.libraryExport?.exportedLibrary,
+      };
+      if (defaultLibrary == null) continue;
+      final defaults = defaultLibrary.exportNamespace.definedNames2;
+
+      for (final configuration in directive.configurations) {
+        final alternate = await _libraryFor(configuration, result, session);
+        if (alternate == null) continue;
+        for (final entry in alternate.exportNamespace.definedNames2.entries) {
+          final alternateNode = ownerOf(entry.value);
+          final defaultNode = ownerOf(defaults[entry.key]);
+          if (alternateNode == null || defaultNode == null) continue;
+          defaultNode.references.add(alternateNode);
+          _linkAlternateMembers(defaults[entry.key], entry.value);
+        }
+      }
+    }
+  }
+
+  /// Links each member of an alternate type to the same-named member of the
+  /// default type, so a platform implementation's methods and fields are
+  /// reachable exactly when the default's are.
+  void _linkAlternateMembers(Element? defaultType, Element alternateType) {
+    if (defaultType is! InterfaceElement ||
+        alternateType is! InterfaceElement) {
+      return;
+    }
+    final members = <Element>[
+      ...alternateType.methods,
+      ...alternateType.fields,
+      ...alternateType.getters,
+      ...alternateType.setters,
+    ];
+    for (final member in members) {
+      final name = member.name;
+      if (name == null) continue;
+      final counterpart = switch (member) {
+        MethodElement() => defaultType.getMethod(name),
+        FieldElement() => defaultType.getField(name),
+        GetterElement() => defaultType.getGetter(name),
+        SetterElement() => defaultType.getSetter(name),
+        _ => null,
+      };
+      final defaultNode = memberNodeOf(counterpart);
+      final alternateNode = memberNodeOf(member);
+      if (defaultNode == null || alternateNode == null) continue;
+      defaultNode.references.add(alternateNode);
+    }
+  }
+
+  Future<LibraryElement?> _libraryFor(
+    Configuration configuration,
+    ResolvedUnitResult result,
+    AnalysisSession session,
+  ) async {
+    final resolved = configuration.resolvedUri;
+    if (resolved is DirectiveUriWithLibrary) return resolved.library;
+
+    final text = configuration.uri.stringValue;
+    if (text == null) return null;
+    final uri = result.libraryElement.uri.resolve(text);
+    final library = await session.getLibraryByUri(uri.toString());
+    return library is LibraryElementResult ? library.element : null;
   }
 
   /// Records the public export surface of each public (`lib/`, non-`src`)

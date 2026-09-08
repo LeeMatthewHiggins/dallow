@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import 'src/internal_for_typedef.dart';
 import 'src/members.dart';
+import 'src/platform_stub.dart' if (dart.library.io) 'src/platform_io.dart';
 import 'src/used.dart';
 
 export 'src/exported.dart';
@@ -21,6 +22,7 @@ String runSample() {
     used(),
     p.basename('a/b'),
     describeService(),
+    platformName(),
     '${makeCircle()}'
   ];
   return items.firstOrNull ?? '';

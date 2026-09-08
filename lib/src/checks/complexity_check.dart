@@ -66,13 +66,15 @@ class ComplexityResult {
     final analysed = functions.length;
     final complexityPenalty = _complexityPenalty();
     final findingPenalty = _findingPenalty(otherFindings);
+    final weighted = _weightedFindings(otherFindings);
 
     return Finding(
       kind: CheckKind.projectHealth,
       severity: Severity.info,
       message: 'Project health score: $score/100 '
           '($analysed function(s) analysed; complexity penalty '
-          '$complexityPenalty; findings penalty $findingPenalty).',
+          '$complexityPenalty; findings penalty $findingPenalty from '
+          '${weighted.toStringAsFixed(1)} weighted findings).',
     );
   }
 
@@ -91,15 +93,23 @@ class ComplexityResult {
   }
 
   int _findingPenalty(Iterable<Finding> otherFindings) {
-    var weighted = 0.0;
-    for (final finding in otherFindings) {
-      weighted += switch (finding.severity) {
-        Severity.error => 2,
-        Severity.warning => 1,
-        Severity.info => 0.25,
-      };
-    }
+    final weighted = _weightedFindings(otherFindings);
     final denominator = math.max(1, functions.length);
     return math.min(40, (weighted / denominator * 5).round());
+  }
+
+  /// Findings summed by severity and by each finding's own [Finding.weight],
+  /// so a copied 800-token function outweighs a repeated import line.
+  double _weightedFindings(Iterable<Finding> otherFindings) {
+    var weighted = 0.0;
+    for (final finding in otherFindings) {
+      final bySeverity = switch (finding.severity) {
+        Severity.error => 2.0,
+        Severity.warning => 1.0,
+        Severity.info => 0.25,
+      };
+      weighted += bySeverity * finding.weight;
+    }
+    return weighted;
   }
 }
