@@ -15,9 +15,20 @@ Future<void> main(List<String> args) async {
     ..addCommand(_CircularCommand())
     ..addCommand(_DuplicationCommand())
     ..addCommand(_ComplexityCommand());
+  runner.argParser.addFlag(
+    'version',
+    negatable: false,
+    help: 'Print the dallow version and the analyzer version it runs on.',
+  );
 
   try {
-    final code = await runner.run(args) ?? 0;
+    final topLevel = runner.parse(args);
+    if (topLevel['version'] as bool) {
+      stdout.writeln(
+          'dallow $dallowVersion (analyzer ${await analyzerVersion()})');
+      exit(0);
+    }
+    final code = await runner.runCommand(topLevel) ?? 0;
     exit(code);
   } on UsageException catch (e) {
     stderr.writeln(e);

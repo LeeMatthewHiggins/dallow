@@ -18,4 +18,5 @@ export 'src/gate/suppression.dart';
 export 'src/graph/code_graph.dart';
 export 'src/report/reporter.dart';
 export 'src/report/sarif_reporter.dart';
+export 'src/version.dart';
 export 'src/workspace/package_discovery.dart';

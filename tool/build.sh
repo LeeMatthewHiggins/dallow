@@ -14,10 +14,18 @@ out_zip="$repo_root/build/dallow-tool.zip"
 rm -rf "$stage" "$out_zip"
 mkdir -p "$stage/bin"
 
+# The resolved analyzer version is baked into the binary so `dallow --version`
+# shows which analyzer a served build runs on (a stale analyzer crashed on
+# Dart 3.10 dot shorthands while source main was fine).
+analyzer_version() {
+  awk '/^  analyzer:/{f=1} f && /^    version:/{gsub(/"/,""); print $2; exit}' "$1"
+}
+
 echo "==> darwin-arm64 (native)"
 if [[ "$(uname -sm)" == "Darwin arm64" ]]; then
   (cd "$repo_root" && dart pub get >/dev/null && \
-    dart compile exe bin/dallow.dart -o "$stage/bin/dallow-darwin-arm64")
+    dart compile exe "-DDALLOW_ANALYZER_VERSION=$(analyzer_version pubspec.lock)" \
+      bin/dallow.dart -o "$stage/bin/dallow-darwin-arm64")
 else
   echo "   skipped (host is not Darwin arm64)"
 fi
@@ -29,7 +37,8 @@ build_linux() {
     -v "$repo_root:/src:ro" -v "$stage/bin:/out" -w /work \
     dart:stable bash -c "cp -r /src/. /work && rm -rf /work/.dart_tool /work/build && \
       dart pub get >/dev/null && \
-      dart compile exe bin/dallow.dart -o /out/dallow-linux-$arch"
+      v=\$(awk '/^  analyzer:/{f=1} f && /^    version:/{gsub(/\"/,\"\"); print \$2; exit}' pubspec.lock) && \
+      dart compile exe -DDALLOW_ANALYZER_VERSION=\$v bin/dallow.dart -o /out/dallow-linux-$arch"
 }
 
 build_linux amd64 linux/amd64 || echo "   linux-amd64 build failed, skipping"
