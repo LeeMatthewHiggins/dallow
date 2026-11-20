@@ -1,0 +1,4 @@
+name: dot_shorthand_fixture
+description: Regression fixture for Dart 3.10 dot shorthands in constant contexts.
+environment:
+  sdk: ^3.10.0

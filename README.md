@@ -99,6 +99,12 @@ console and markdown reports prefix each finding with its package path, and JSON
 findings carry a `package` field. The exit code honours `--fail-on` evaluated
 **across all packages**.
 
+### Version
+
+`dallow --version` prints the dallow version and the resolved `analyzer`
+version, for example `dallow 0.3.0 (analyzer 14.7.0)`. `tool/build.sh` bakes
+the analyzer version into each compiled binary.
+
 ### Exit codes
 
 | Code | Meaning |

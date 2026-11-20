@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `dallow --version` prints the dallow version and the resolved `analyzer`
+  version, so a stale binary is visible at a glance. `tool/build.sh` bakes the
+  analyzer version into each compiled binary.
+- Regression test: `analyze` completes on Dart 3.10 dot shorthands in
+  parameter default values and const contexts. A binary built on an analyzer
+  older than 14 crashed there with `Missing implementation of
+  visitDotShorthandInvocation` (exit 255).
 - Dead code: refuse to analyse a package whose own source cannot be resolved —
   a file the analyzer returns no resolved unit for, or a relative /
   `package:<this package>/` import it cannot find (normally a missing
