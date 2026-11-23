@@ -34,3 +34,21 @@ class GenericBox<T> {
   /// Never referenced → FLAGGED.
   void _unusedInGeneric() {}
 }
+
+/// Fields read only through a compound assignment or an increment.
+class Counter {
+  int next() => ++_count;
+
+  String label() => _label ??= 'counter';
+
+  void reset() => _written = 0;
+
+  /// Read by `++` → used → clean.
+  int _count = 0;
+
+  /// Read by `??=` → used → clean.
+  String? _label;
+
+  /// Only ever assigned, never read → FLAGGED.
+  int _written = 0;
+}

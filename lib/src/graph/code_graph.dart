@@ -763,6 +763,28 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     super.visitNamedType(node);
   }
 
+  // The target of `x += 1`, `x ??= v`, `++x` or `x--` is read as well as
+  // written, but its identifier carries no element: the analyzer records
+  // the read on the expression instead. A plain `x = v` reads nothing, so a
+  // field that is only ever assigned stays unreachable.
+  @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    _record(node.readElement);
+    super.visitAssignmentExpression(node);
+  }
+
+  @override
+  void visitPrefixExpression(PrefixExpression node) {
+    _record(node.readElement);
+    super.visitPrefixExpression(node);
+  }
+
+  @override
+  void visitPostfixExpression(PostfixExpression node) {
+    _record(node.readElement);
+    super.visitPostfixExpression(node);
+  }
+
   void _record(Element? referenced) {
     if (referenced == null) return;
     final from = _current;
