@@ -568,9 +568,11 @@ class CodeGraph {
   /// Maps a referenced [element] to its member node, or null when it is not a
   /// registered member. A synthetic property accessor (the implicit getter or
   /// setter of a field) is unwrapped to its backing field, so reading or
-  /// writing a field resolves to the field's node.
+  /// writing a field resolves to the field's node. A member referenced inside
+  /// a generic type is a substituted element; it is unwrapped to the
+  /// declaration it was substituted from ([Element.baseElement]).
   CodeNode? memberNodeOf(Element? element) {
-    var current = element;
+    var current = element?.baseElement;
     if (current is PropertyAccessorElement && _isSyntheticProperty(current)) {
       current = current.variable;
     }
