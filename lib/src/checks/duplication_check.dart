@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/utilities.dart';
@@ -12,7 +13,7 @@ import 'package:path/path.dart' as p;
 const minDuplicateBlockSize = 4;
 
 /// Default token block size for duplicate code detection.
-const defaultDuplicateBlockSize = 20;
+const defaultDuplicateBlockSize = 50;
 
 /// Detects repeated lexical token sequences across Dart source files.
 ///
@@ -22,13 +23,20 @@ const defaultDuplicateBlockSize = 20;
 class DuplicationCheck {
   const DuplicationCheck();
 
-  List<Finding> run(String rootPath, {int? minBlockSize}) {
+  /// Scans the Dart files under [rootPath]. A file is left out when
+  /// [include], given its package-relative path, returns false.
+  List<Finding> run(
+    String rootPath, {
+    int? minBlockSize,
+    bool Function(String relativePath)? include,
+  }) {
     final blockSize = minBlockSize ?? defaultDuplicateBlockSize;
     final sourceRoot = _sourceRoot(rootPath);
     final tokens = <_LexToken>[];
 
     for (final path in _dartFiles(rootPath)) {
       final relativePath = p.relative(path, from: sourceRoot);
+      if (include != null && !include(relativePath)) continue;
       tokens
         ..addAll(_scanFile(path, relativePath))
         ..add(_LexToken(_sentinel(path), relativePath, -1, -1));
@@ -36,36 +44,31 @@ class DuplicationCheck {
 
     if (tokens.length < blockSize * 2) return const [];
 
-    final suffixes = List<int>.generate(tokens.length, (index) => index)
-      ..sort((a, b) => _compareSuffixes(tokens, a, b));
-
-    final candidates = <_Candidate>[];
-    for (var i = 1; i < suffixes.length; i++) {
-      final first = suffixes[i - 1];
-      final second = suffixes[i];
-      final length = _commonPrefix(tokens, first, second);
-      if (length >= blockSize) {
-        candidates.add(_Candidate(first, second, length));
-      }
-    }
-
-    candidates.sort((a, b) => b.length.compareTo(a.length));
+    final index = _SuffixIndex(tokens);
+    final candidates = index.candidates(blockSize)
+      ..sort((a, b) => b.length.compareTo(a.length));
 
     final findings = <Finding>[];
-    final accepted = <_Range>[];
-    final seen = <String>{};
+    final covered = Uint8List(tokens.length);
+    final seen = <int>{};
     for (final candidate in candidates) {
-      if (_isCovered(candidate, accepted)) continue;
+      if (covered[candidate.start] == 1 || covered[candidate.other] == 1) {
+        continue;
+      }
 
-      final key = _sequenceKey(tokens, candidate.start, candidate.length);
-      if (!seen.add(key)) continue;
+      final matches = index.matchesOf(candidate);
+      if (!seen.add(matches.key)) continue;
 
-      final occurrences = _occurrences(tokens, suffixes, candidate);
+      final occurrences = _occurrences(tokens, matches, candidate.length);
       if (occurrences.length < 2) continue;
 
-      accepted.addAll(
-        occurrences.map((o) => _Range(o.index, o.index + candidate.length)),
-      );
+      for (final occurrence in occurrences) {
+        covered.fillRange(
+          occurrence.index,
+          occurrence.index + candidate.length,
+          1,
+        );
+      }
       findings.add(_findingFor(occurrences, candidate.length, blockSize));
     }
 
@@ -97,19 +100,18 @@ class DuplicationCheck {
     );
   }
 
+  /// The non-overlapping places the matched block occurs, in file order.
   List<_Occurrence> _occurrences(
     List<_LexToken> tokens,
-    List<int> suffixes,
-    _Candidate candidate,
+    _Matches matches,
+    int length,
   ) {
-    final sequence = _sequence(tokens, candidate.start, candidate.length);
     final occurrences = <_Occurrence>[];
 
-    for (final suffix in suffixes) {
-      if (!_matches(tokens, suffix, sequence)) continue;
+    for (final suffix in matches.starts) {
       final token = tokens[suffix];
       final occurrence = _Occurrence(suffix, token.file, token.line);
-      if (_overlapsKept(occurrence, occurrences, candidate.length)) continue;
+      if (_overlapsKept(occurrence, occurrences, length)) continue;
       occurrences.add(occurrence);
     }
 
@@ -246,56 +248,115 @@ class DuplicationCheck {
     }
     return false;
   }
+}
 
-  bool _isCovered(_Candidate candidate, List<_Range> accepted) {
-    for (final range in accepted) {
-      if (range.contains(candidate.start) || range.contains(candidate.other)) {
-        return true;
-      }
+/// A suffix array over the normalised token stream, with the length of the
+/// prefix each suffix shares with its predecessor.
+///
+/// Sorting every suffix puts repeated token sequences next to each other, so
+/// all occurrences of a block form one contiguous run of the array. Tokens are
+/// compared as integer ranks rather than strings, and each run is found by
+/// walking the shared-prefix lengths outward — never by rescanning the stream.
+class _SuffixIndex {
+  _SuffixIndex(List<_LexToken> tokens)
+      : _ranks = _rank(tokens),
+        _suffixes = Int32List(tokens.length),
+        _sharedPrefix = Int32List(tokens.length) {
+    for (var i = 0; i < _suffixes.length; i++) {
+      _suffixes[i] = i;
     }
-    return false;
+    _suffixes.sort(_compareSuffixes);
+    for (var i = 1; i < _suffixes.length; i++) {
+      _sharedPrefix[i] = _commonPrefix(_suffixes[i - 1], _suffixes[i]);
+    }
   }
 
-  int _compareSuffixes(List<_LexToken> tokens, int a, int b) {
+  /// Each token's rank among the distinct normalised lexemes, in string
+  /// order, so comparing two ranks orders tokens exactly as comparing their
+  /// text would.
+  final Int32List _ranks;
+
+  /// Token offsets, ordered by the suffix starting at each.
+  final Int32List _suffixes;
+
+  /// `_sharedPrefix[i]` is how many leading tokens the suffixes at positions
+  /// `i - 1` and `i` have in common. File sentinels and declaration markers
+  /// are unique, so a shared prefix never crosses a file or a declaration.
+  final Int32List _sharedPrefix;
+
+  static Int32List _rank(List<_LexToken> tokens) {
+    final lexemes = {for (final token in tokens) token.normalised}.toList()
+      ..sort();
+    final rankOf = {for (var i = 0; i < lexemes.length; i++) lexemes[i]: i};
+    final ranks = Int32List(tokens.length);
+    for (var i = 0; i < tokens.length; i++) {
+      ranks[i] = rankOf[tokens[i].normalised]!;
+    }
+    return ranks;
+  }
+
+  /// Every adjacent pair of suffixes sharing at least [minLength] tokens.
+  List<_Candidate> candidates(int minLength) => [
+        for (var i = 1; i < _suffixes.length; i++)
+          if (_sharedPrefix[i] >= minLength)
+            _Candidate(
+              position: i,
+              start: _suffixes[i - 1],
+              other: _suffixes[i],
+              length: _sharedPrefix[i],
+            ),
+      ];
+
+  /// Every place the block behind [candidate] starts: the run of suffixes
+  /// around it that all share at least the candidate's length.
+  _Matches matchesOf(_Candidate candidate) {
+    final length = candidate.length;
+    var first = candidate.position - 1;
+    while (first > 0 && _sharedPrefix[first] >= length) {
+      first--;
+    }
+    var last = candidate.position;
+    while (last + 1 < _suffixes.length && _sharedPrefix[last + 1] >= length) {
+      last++;
+    }
+    return _Matches(
+      key: first * (_suffixes.length + 1) + length,
+      starts: Int32List.sublistView(_suffixes, first, last + 1),
+    );
+  }
+
+  int _compareSuffixes(int a, int b) {
+    final count = _ranks.length;
     var left = a;
     var right = b;
-    while (left < tokens.length && right < tokens.length) {
-      final order = tokens[left].normalised.compareTo(tokens[right].normalised);
+    while (left < count && right < count) {
+      final order = _ranks[left] - _ranks[right];
       if (order != 0) return order;
       left++;
       right++;
     }
-    return (tokens.length - a).compareTo(tokens.length - b);
+    return (count - a).compareTo(count - b);
   }
 
-  int _commonPrefix(List<_LexToken> tokens, int a, int b) {
+  int _commonPrefix(int a, int b) {
+    final count = _ranks.length;
     var length = 0;
-    while (a + length < tokens.length && b + length < tokens.length) {
-      final left = tokens[a + length].normalised;
-      final right = tokens[b + length].normalised;
-      if (left != right || left.startsWith('<file:')) break;
+    while (a + length < count &&
+        b + length < count &&
+        _ranks[a + length] == _ranks[b + length]) {
       length++;
     }
     return length;
   }
+}
 
-  List<String> _sequence(List<_LexToken> tokens, int start, int length) =>
-      tokens
-          .skip(start)
-          .take(length)
-          .map((token) => token.normalised)
-          .toList(growable: false);
+/// The occurrences of one repeated block: where each starts, and a [key]
+/// shared by every candidate that describes the same block.
+class _Matches {
+  const _Matches({required this.key, required this.starts});
 
-  String _sequenceKey(List<_LexToken> tokens, int start, int length) =>
-      _sequence(tokens, start, length).join('\u{1f}');
-
-  bool _matches(List<_LexToken> tokens, int start, List<String> sequence) {
-    if (start + sequence.length > tokens.length) return false;
-    for (var i = 0; i < sequence.length; i++) {
-      if (tokens[start + i].normalised != sequence[i]) return false;
-    }
-    return true;
-  }
+  final int key;
+  final List<int> starts;
 }
 
 class _LexToken {
@@ -308,8 +369,16 @@ class _LexToken {
 }
 
 class _Candidate {
-  const _Candidate(this.start, this.other, this.length);
+  const _Candidate({
+    required this.position,
+    required this.start,
+    required this.other,
+    required this.length,
+  });
 
+  /// Where the pair sits in the suffix array: [other] is at this position and
+  /// [start] at the one before.
+  final int position;
   final int start;
   final int other;
   final int length;

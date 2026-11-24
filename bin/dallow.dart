@@ -50,8 +50,22 @@ abstract class _CheckCommand extends Command<int> {
       ..addOption(
         'fail-on',
         allowed: ['error', 'warning', 'info', 'never'],
-        defaultsTo: 'error',
-        help: 'Lowest severity that causes a non-zero exit code.',
+        help: 'Lowest severity that causes a non-zero exit code. Defaults to '
+            'the fail-on value in ${DallowConfig.fileName}, else error.',
+      )
+      ..addOption(
+        'config',
+        abbr: 'c',
+        help: 'Read settings from this file instead of the '
+            '${DallowConfig.fileName} at the package root. In a recursive '
+            'run it applies to every package.',
+      )
+      ..addFlag(
+        'include-generated',
+        negatable: false,
+        help: 'Report findings located in generated code (*.g.dart, '
+            '*.freezed.dart, files with a generated-code header, ...). They '
+            'are left out by default.',
       )
       ..addOption(
         'max-cycle-size',
@@ -77,15 +91,22 @@ abstract class _CheckCommand extends Command<int> {
             '0, instead of gating. Run once to adopt the gate on an existing '
             'codebase.',
       )
+      ..addFlag(
+        'include-tests',
+        negatable: false,
+        help: 'Scan test code (test/, integration_test/, test_driver/) for '
+            'duplication. Tests are left out of duplicate detection by '
+            'default; every other check always covers them.',
+      )
       ..addOption(
         'min-block-size',
-        help: 'Minimum duplicate token block size. Defaults to '
-            '$defaultDuplicateBlockSize.',
+        help: 'Minimum duplicate token block size. Defaults to the '
+            'configured value, else $defaultDuplicateBlockSize.',
       )
       ..addOption(
         'max-complexity',
         help: 'Maximum cyclomatic complexity before a function is reported. '
-            'Defaults to $defaultMaxComplexity.',
+            'Defaults to the configured value, else $defaultMaxComplexity.',
       )
       ..addFlag(
         'report-unused-ignores',
@@ -168,6 +189,18 @@ abstract class _CheckCommand extends Command<int> {
       return 64;
     }
 
+    final DallowConfig? explicitConfig;
+    final DallowConfig rootConfig;
+    try {
+      explicitConfig = _explicitConfig();
+      rootConfig = explicitConfig ?? DallowConfig.forPackage(root);
+    } on ConfigException catch (e) {
+      stderr.writeln(e.message);
+      return 64;
+    }
+    final reportGenerated = _enabledOrNull('include-generated');
+    final duplicationIncludesTests = _enabledOrNull('include-tests');
+
     final recursive = argResults!['recursive'] as bool;
     WorkspaceDiscovery? discovery;
     if (recursive) {
@@ -203,6 +236,9 @@ abstract class _CheckCommand extends Command<int> {
               minBlockSize: minBlockSize,
               maxComplexity: maxComplexity,
               allowUnresolved: allowUnresolved,
+              reportGenerated: reportGenerated,
+              duplicationIncludesTests: duplicationIncludesTests,
+              config: explicitConfig,
               discovery: discovery,
             )
           : await analyze(
@@ -212,7 +248,13 @@ abstract class _CheckCommand extends Command<int> {
               minBlockSize: minBlockSize,
               maxComplexity: maxComplexity,
               allowUnresolved: allowUnresolved,
+              reportGenerated: reportGenerated,
+              duplicationIncludesTests: duplicationIncludesTests,
+              config: rootConfig,
             );
+    } on ConfigException catch (e) {
+      stderr.writeln(e.message);
+      return 64;
     } on SdkNotFoundException catch (e) {
       stderr.writeln(e.message);
       return 69;
@@ -243,8 +285,27 @@ abstract class _CheckCommand extends Command<int> {
     final format = ReportFormat.values.byName(argResults!['format'] as String);
     stdout.writeln(Reporter(format).render(gated));
 
-    final failOn = FailOn.values.byName(argResults!['fail-on'] as String);
-    return exitCodeFor(gated, failOn: failOn);
+    return exitCodeFor(gated, failOn: _failOn(rootConfig));
+  }
+
+  /// True when the on/off [flag] was passed, else null so the configured
+  /// value applies.
+  bool? _enabledOrNull(String flag) =>
+      (argResults![flag] as bool) ? true : null;
+
+  /// The configuration named by `--config`, or null when the flag is absent
+  /// and each package's own `dallow.yaml` applies.
+  DallowConfig? _explicitConfig() {
+    final path = argResults!['config'] as String?;
+    return path == null ? null : DallowConfig.fromFile(path);
+  }
+
+  /// The gate threshold: the `--fail-on` flag, else the configured value,
+  /// else `error`.
+  FailOn _failOn(DallowConfig config) {
+    final flag = argResults!['fail-on'] as String?;
+    if (flag != null) return FailOn.values.byName(flag);
+    return config.failOn ?? FailOn.error;
   }
 
   /// Applies the PR-gate filters — inline `dallow-ignore` suppression, then

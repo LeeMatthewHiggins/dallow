@@ -46,7 +46,9 @@ final _packageImport = RegExp(
 class DependencyCheck {
   const DependencyCheck();
 
-  List<Finding> run(String rootPath) {
+  /// Cross-checks `pubspec.yaml` against the imports under [rootPath]. A
+  /// package named in [ignored] is never reported.
+  List<Finding> run(String rootPath, {Set<String> ignored = const {}}) {
     final pubspecFile = File(p.join(rootPath, 'pubspec.yaml'));
     if (!pubspecFile.existsSync()) return const [];
 
@@ -79,7 +81,9 @@ class DependencyCheck {
       ),
     ];
 
-    return findings..sort((a, b) => (a.symbol ?? '').compareTo(b.symbol ?? ''));
+    return findings
+      ..removeWhere((f) => ignored.contains(f.symbol))
+      ..sort((a, b) => (a.symbol ?? '').compareTo(b.symbol ?? ''));
   }
 
   Iterable<Finding> _unusedDependencies(

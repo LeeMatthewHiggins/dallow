@@ -162,12 +162,17 @@ class FunctionComplexity {
     required this.relativePath,
     required this.line,
     required this.complexity,
+    this.isClosure = false,
   });
 
   final String symbol;
   final String relativePath;
   final int line;
   final int complexity;
+
+  /// Whether this is an anonymous function rather than a declared function,
+  /// method or constructor.
+  final bool isClosure;
 }
 
 /// The resolved symbol graph for a single package, plus the file-level import
@@ -570,7 +575,7 @@ class CodeGraph {
   /// setter of a field) is unwrapped to its backing field, so reading or
   /// writing a field resolves to the field's node.
   CodeNode? memberNodeOf(Element? element) {
-    var current = element;
+    var current = element?.baseElement;
     if (current is PropertyAccessorElement && _isSyntheticProperty(current)) {
       current = current.variable;
     }
@@ -761,6 +766,37 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     super.visitNamedType(node);
   }
 
+  @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    _recordAssignment(node);
+    super.visitAssignmentExpression(node);
+  }
+
+  @override
+  void visitPrefixExpression(PrefixExpression node) {
+    _recordAssignment(node);
+    super.visitPrefixExpression(node);
+  }
+
+  @override
+  void visitPostfixExpression(PostfixExpression node) {
+    _recordAssignment(node);
+    super.visitPostfixExpression(node);
+  }
+
+  /// The target of an assignment carries no element of its own: the analyzer
+  /// resolves it onto the enclosing expression instead. A compound form
+  /// (`x++`, `x += 1`, `x ??= y`) reads the target, which is a use. A write
+  /// is a use only when it invokes a declared setter — a field that is merely
+  /// assigned and never read stays unused.
+  void _recordAssignment(CompoundAssignmentExpression node) {
+    _record(node.readElement);
+    final written = node.writeElement;
+    if (written is SetterElement && !CodeGraph._isSyntheticProperty(written)) {
+      _record(written);
+    }
+  }
+
   void _record(Element? referenced) {
     if (referenced == null) return;
     final from = _current;
@@ -826,18 +862,22 @@ class _ComplexityCollector extends RecursiveAstVisitor<void> {
   void visitFunctionExpression(FunctionExpression node) {
     if (node.parent is FunctionDeclaration) return;
     final line = _result.lineInfo.getLocation(node.offset).lineNumber;
-    _record('${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
-        node.body);
+    _record(
+      '${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
+      node.body,
+      isClosure: true,
+    );
     node.body.accept(this);
   }
 
-  void _record(String symbol, FunctionBody body) {
+  void _record(String symbol, FunctionBody body, {bool isClosure = false}) {
     _graph._functions.add(
       FunctionComplexity(
         symbol: symbol,
         relativePath: p.relative(_result.path, from: _graph.rootPath),
         line: _result.lineInfo.getLocation(body.parent!.offset).lineNumber,
         complexity: _ComplexityCounter.count(body),
+        isClosure: isClosure,
       ),
     );
   }

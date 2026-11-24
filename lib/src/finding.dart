@@ -75,6 +75,18 @@ class Finding {
         weight: weight,
       );
 
+  /// Returns a copy of this finding reported at [severity].
+  Finding withSeverity(Severity severity) => Finding(
+        kind: kind,
+        severity: severity,
+        message: message,
+        file: file,
+        line: line,
+        symbol: symbol,
+        package: package,
+        weight: weight,
+      );
+
   Map<String, Object?> toJson() => {
         if (package != null) 'package': package,
         'kind': kind.id,

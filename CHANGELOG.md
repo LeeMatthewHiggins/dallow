@@ -2,6 +2,70 @@
 
 ## Unreleased
 
+- **Breaking:** duplication no longer scans test code (`test/`,
+  `integration_test/`, `test_driver/`) by default — tests repeat their
+  arrange-and-assert scaffolding by design, and on a 220k-line package 85% of
+  duplication findings were in tests. Pass `--include-tests` or set
+  `duplication.include-tests: true` to scan them. Every other check still
+  covers tests.
+- **Breaking:** the health score is rescaled so it differentiates real
+  codebases. Both penalties are now measured against *declared* functions
+  (closures no longer dilute them): 4 points per percent of functions over
+  the complexity limit, a function at twice the limit counting double, and
+  1 point per weighted finding per hundred functions. The message adds a
+  letter grade (A–F) and the number of functions over the limit. Scores are
+  lower than before for the same code: a package with 134 over-complex
+  functions that scored 99 now scores 72.
+- Performance: duplication is about 40 times faster on large packages. Tokens
+  are compared as integer ranks, and each block's occurrences are read from
+  the suffix array as one contiguous run instead of rescanning the token
+  stream per candidate. A 220k-line package went from 272 seconds to under 7,
+  with identical findings.
+- **Breaking:** duplication's default minimum block size is now `50` tokens,
+  up from `20`, matching fallow. Small repeated fragments are no longer
+  reported; pass `--min-block-size 20` or set `duplication.min-block-size` to
+  keep the old behaviour. On dallow's own source this cut duplication findings
+  from 184 to 26.
+- Configuration file: a `dallow.yaml` at the package root sets `exclude`
+  globs, `fail-on`, per-kind `rules` (`error`, `warning`, `info`, `off`),
+  `dependencies.ignore`, `circular.max-cycle-size`,
+  `duplication.min-block-size` and `duplication.exclude`, and
+  `complexity.max-complexity`. Flags override it, `--config <file>` names
+  another file, and a recursive run falls back from each package to the
+  workspace root. Unknown keys, wrong types and invalid globs exit `64`.
+- Generated code: findings located in generated files (`*.g.dart`,
+  `*.freezed.dart`, `*.gr.dart`, `*.mocks.dart`, `*.gen.dart`, protobuf
+  outputs, or any file with a generated-code banner) are no longer reported,
+  and generated functions are left out of the health score. The files still
+  feed the symbol graph, so code they reference stays reachable. Report them
+  with `--include-generated` or `generated.report: true`; mark more files with
+  `generated.patterns`.
+- Dead code: a symbol annotated `@pragma('vm:entry-point')`, and the members
+  of a type so annotated, are entrypoints and never reported dead.
+- Library: `analyze` and `analyzeWorkspace` take `config:` and
+  `reportGenerated:`; `DallowConfig`, `RuleLevel`, `ConfigException` and
+  `SourceScope` are exported.
+- Dead code: a field read only through a compound assignment (`_count++`,
+  `_total += n`, `_cache ??= load()`) and a declared setter invoked only by
+  assignment are no longer reported dead. The analyzer resolves an assignment
+  target onto the enclosing expression, which the graph did not read. A field
+  that is assigned but never read is still reported.
+- Dead code: a member of a generic class or extension reached through an
+  instantiated type (`Box<int>().unwrap()`, an extension method on `List<E>`)
+  is no longer reported dead. The analyzer resolves such a call to a
+  substituted member, which was not matched back to its declaration.
+- PR gate: `--changed-since` no longer returns an empty change set when the
+  package path contains a symbolic link (on macOS, anything under `/tmp` or
+  `/var`). The package root is now canonicalised before it is compared with
+  the paths git reports.
+- Library: `analyze` accepts a path relative to the current directory instead
+  of throwing `Only absolute normalized paths are supported`.
+- Docs: README gains a finding-kind reference, requirements, and a library
+  usage section; `example/example.dart` shows programmatic use; the Digital
+  Workforce tool manifest covers every command and flag; and
+  `doc/fallow-parity.md` compares dallow with fallow feature by feature.
+- CI: a GitHub Actions workflow runs format, analyze, tests and a publish
+  dry-run on Linux and macOS.
 - `dallow --version` prints the dallow version and the resolved `analyzer`
   version, so a stale binary is visible at a glance. `tool/build.sh` bakes the
   analyzer version into each compiled binary.

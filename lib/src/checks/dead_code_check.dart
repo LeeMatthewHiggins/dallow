@@ -25,6 +25,10 @@ import 'package:dallow/src/graph/code_graph.dart';
 /// or declared on a non-public-API (e.g. `lib/src`) type. Public members of
 /// public-API classes are never reported — exactly as for top-level symbols.
 ///
+/// **Declared entrypoints** — any symbol annotated
+/// `@pragma('vm:entry-point')`, and every member of a type so annotated — are
+/// roots too: the VM or native code calls them without a Dart reference.
+///
 /// The check is deliberately conservative: a false "dead member" is worse than
 /// a miss, so anything reachable through inheritance or an annotation is kept.
 class DeadCodeCheck {
@@ -84,12 +88,15 @@ class DeadCodeCheck {
 
   Set<CodeNode> _reachableFrom(CodeGraph graph, Set<CodeNode> participants) {
     final seeds = <CodeNode>[
-      ...graph.nodes.where((n) => n.isConsumerFile || n.isPublicApi),
+      ...graph.nodes.where(
+        (n) => n.isConsumerFile || n.isPublicApi || _isEntryPoint(n),
+      ),
       ...graph.exportedApi,
       ...graph.memberNodes.where(
         (m) =>
             m.isConsumerFile ||
             participants.contains(m) ||
+            _isEntryPoint(m) ||
             (!m.isPrivate && _enclosingIsPublicSurface(m, graph)),
       ),
     ];
@@ -103,6 +110,19 @@ class DeadCodeCheck {
     }
     return reachable;
   }
+
+  /// True when [node], or the type that declares it, carries
+  /// `@pragma('vm:entry-point')`.
+  bool _isEntryPoint(CodeNode node) {
+    final owner = node.owner;
+    return _hasEntryPointPragma(node.element) ||
+        (owner != null && _hasEntryPointPragma(owner.element));
+  }
+
+  bool _hasEntryPointPragma(Element element) => element.metadata.annotations
+      .any((a) => a.toSource().contains(_entryPointPragma));
+
+  static const _entryPointPragma = 'vm:entry-point';
 
   /// A member is reportable when it is private, or its enclosing type is not
   /// part of the public API surface (e.g. a `lib/src` class). Public members of

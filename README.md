@@ -1,16 +1,22 @@
 # dallow
 
-**Codebase intelligence for Dart and Flutter.** A fast, zero-config CLI that
-finds the structural rot `dart analyze` leaves behind: dead code that no
-entrypoint can reach, dependency drift in `pubspec.yaml`, circular imports, and
-duplicated code blocks, plus complexity hot spots and an aggregate project
-health score.
+[![CI](https://github.com/LeeMatthewHiggins/dallow/actions/workflows/ci.yml/badge.svg)](https://github.com/LeeMatthewHiggins/dallow/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
+
+**Codebase intelligence for Dart and Flutter.** A fast CLI that works with no
+configuration and finds the structural rot `dart analyze` leaves behind: dead
+code that no entrypoint can reach, dependency drift in `pubspec.yaml`, circular
+imports, and duplicated code blocks, plus complexity hot spots and an aggregate
+project health score.
 
 dallow is a Dart-native take on the ideas behind
 [fallow](https://github.com/fallow-rs/fallow) (codebase intelligence for
-TypeScript/JavaScript). Where fallow approximates reachability syntactically,
-dallow builds on the Dart `analyzer`'s **resolved element model** — so the
-"what is connected to what?" graph is real, not heuristic.
+TypeScript/JavaScript). Where fallow's default analysis is syntactic, dallow
+always builds on the Dart `analyzer`'s **resolved element model** — so the
+"what is connected to what?" graph is real, not heuristic. See
+[doc/fallow-parity.md](doc/fallow-parity.md) for a feature-by-feature
+comparison of the two tools.
 
 ## What it checks
 
@@ -19,8 +25,34 @@ dallow builds on the Dart `analyzer`'s **resolved element model** — so the
 | **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) **and class members** (methods, getters/setters, fields) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol, or a public member of a public-API class, is never flagged as dead. Members reached through inheritance (an `@override`, an interface implementation, or a member overridden by a subtype) are kept, since they may be dispatched dynamically; a field initialised through a `this.x` constructor parameter counts as used. A conditional `import`/`export` (`if (dart.library.io) …`) keeps every alternate reachable whenever its default branch is, so platform-specific implementations are never reported dead. |
 | **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
-| **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. Directives (`import`, `export`, `part`, `library`) are skipped, so files that share an import header are not reported as duplicating each other. |
-| **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits an info-level project health score. |
+| **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. Directives (`import`, `export`, `part`, `library`) are skipped, so files that share an import header are not reported as duplicating each other. Test code (`test/`, `integration_test/`, `test_driver/`) is left out unless `--include-tests` is passed: tests repeat their arrange-and-assert scaffolding by design. |
+| **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits an info-level project health score with a letter grade. |
+
+### Finding kinds
+
+Every finding carries a stable kind id — shown in `[brackets]` in console
+output, as `kind` in JSON, and as `ruleId` in SARIF. It is also the token a
+scoped [`dallow-ignore`](#inline-suppression-dallow-ignore) comment takes.
+
+| Kind | Severity | Produced by |
+| --- | --- | --- |
+| `dead-code` | warning | `dead-code` |
+| `unused-dependency` | warning | `deps` |
+| `missing-dependency` | error | `deps` |
+| `misplaced-dependency` | warning | `deps` |
+| `circular-import` | warning | `circular` |
+| `duplicate-code` | warning | `duplication` |
+| `high-complexity` | warning, or error at twice the threshold | `complexity` |
+| `project-health` | info | `complexity` |
+| `unresolved-source` | warning | any graph-backed check, with `--allow-unresolved` |
+| `unused-ignore` | info | any check, with `--report-unused-ignores` |
+
+## Requirements
+
+dallow resolves the package it analyses against a **Dart SDK** (3.6 or newer),
+found on `PATH`, through the `DART_SDK` environment variable, or bundled with
+Flutter. Run `dart pub get` (or `flutter pub get`) in the target package first
+so its imports resolve.
 
 ## Install
 
@@ -53,9 +85,12 @@ dallow complexity [path]   # only complexity metrics and health score
 | --- | --- | --- |
 | `-f, --format` | `console`, `json`, `markdown`, or `sarif` (see [SARIF output](#sarif-output)) | `console` |
 | `-r, --recursive` | Scan **every member package** of a monorepo in one run (see [Monorepos](#monorepos)) | off |
+| `-c, --config <file>` | Read settings from this file instead of the package's `dallow.yaml` — see [Configuration](#configuration) | `dallow.yaml` |
 | `--fail-on` | Lowest severity that exits non-zero: `error`, `warning`, `info`, `never` | `error` |
+| `--include-generated` | Report findings located in generated code — see [Generated code](#generated-code) | off |
 | `--max-cycle-size` | Skip import/export cycles with more than this many files — ignore a known barrel mega-cycle while still catching small new ones | unlimited |
-| `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `20` |
+| `--min-block-size` | Minimum duplicate token block size for `duplication` and `analyze` | `50` |
+| `--include-tests` | Scan test code for duplication too. Every other check always covers tests | off |
 | `--max-complexity` | Maximum cyclomatic complexity before a function is reported by `complexity` and `analyze` | `10` |
 | `--changed-since <ref>` | Only report findings in files changed since a git ref (the merge-base of `<ref>...HEAD`) — see [PR gate](#pr-gate) | off |
 | `--baseline <file>` | Suppress findings recorded in a baseline file, so the gate fails only on findings introduced after it was written | off |
@@ -64,7 +99,94 @@ dallow complexity [path]   # only complexity metrics and health score
 | `--report-unused-ignores` | Emit an info-level `unused-ignore` finding for every `dallow-ignore` comment that suppressed nothing — see [Inline suppression](#inline-suppression-dallow-ignore) | off |
 
 These options apply to every subcommand (`analyze`, `dead-code`, `deps`,
-`circular`, `duplication`, `complexity`).
+`circular`, `duplication`, `complexity`). A flag always overrides the same
+setting in `dallow.yaml`.
+
+### Configuration
+
+dallow needs no configuration, but a `dallow.yaml` at the package root keeps
+thresholds, ignored paths and rule severities in the repository instead of on
+every command line. Every key is optional:
+
+```yaml
+# Files whose findings are never reported.
+exclude:
+  - lib/l10n/**
+  - "*_legacy.dart"
+
+generated:
+  report: false        # true reports findings in generated code too
+  patterns:            # extra globs marking files as generated
+    - "*.gql.dart"
+
+fail-on: warning       # error | warning | info | never
+
+rules:                 # per finding kind: error | warning | info | off
+  dead-code: error
+  circular-import: off
+
+dependencies:
+  ignore:              # packages the deps check never reports
+    - build_runner
+
+circular:
+  max-cycle-size: 20
+
+duplication:
+  min-block-size: 50
+  include-tests: false # true scans test/, integration_test/, test_driver/
+  exclude:             # left out of duplicate detection only
+    - tool/**
+
+complexity:
+  max-complexity: 15
+```
+
+- **Globs** support `*`, `**`, `?`, `[…]` and `{a,b}`. A pattern without a `/`
+  matches a file name at any depth (`*_legacy.dart`); one with a `/` matches
+  the path from the package root (`lib/l10n/**`).
+- **Excluded files still feed the symbol graph.** Code they reference stays
+  reachable; only the findings located in them are dropped.
+- **`rules`** takes the [finding kinds](#finding-kinds) as keys. `off` removes
+  a kind from the report and from the health score. `unused-ignore` is not
+  configurable here: `--report-unused-ignores` controls it.
+- **Monorepos**: in a `--recursive` run each member package uses its own
+  `dallow.yaml`, falling back to the one at the workspace root. `fail-on` is
+  read from the workspace root.
+- **`--config <file>`** replaces the lookup with one file, applied to every
+  package.
+
+An unknown key, a value of the wrong type or an invalid glob is **rejected
+with exit 64** naming the problem, rather than ignored — a typo can never
+quietly disable a setting.
+
+### Generated code
+
+Findings located in generated code are left out by default: nobody edits those
+files by hand, so their dead helpers, repeated blocks and branchy functions are
+noise. A file counts as generated when either:
+
+- its name matches a known generator output — `*.g.dart`, `*.freezed.dart`,
+  `*.gr.dart`, `*.mocks.dart`, `*.gen.dart`, and the protobuf family
+  (`*.pb.dart`, `*.pbenum.dart`, `*.pbjson.dart`, `*.pbgrpc.dart`,
+  `*.pbserver.dart`) — or a glob under `generated.patterns`; or
+- its leading comment carries a generated-code banner, such as
+  `// GENERATED CODE - DO NOT MODIFY BY HAND` or
+  `// Autogenerated …, do not edit`.
+
+Generated files are still resolved into the symbol graph, so a hand-written
+symbol referenced only from a `.g.dart` part is **not** reported dead.
+Generated functions are also left out of the health score. Dependency checks
+are unaffected: an import in a generated file still counts as a use.
+
+Pass `--include-generated`, or set `generated.report: true`, to report on
+generated code as well. Generated files must exist on disk — run
+`dart run build_runner build` first if they are not committed, otherwise their
+`part` directives cannot be resolved and dallow exits `78`.
+
+Symbols annotated `@pragma('vm:entry-point')`, and the members of a type so
+annotated, are treated as entrypoints: the VM or native code calls them
+without a Dart reference, so they are never reported dead.
 
 ### Monorepos
 
@@ -111,7 +233,7 @@ the analyzer version into each compiled binary.
 | --- | --- |
 | `0` | Nothing at or above the `--fail-on` threshold was found |
 | `1` | Findings at or above the `--fail-on` threshold |
-| `64` | Usage error (bad directory, bad `--max-cycle-size`, an unknown `--changed-since` ref, a non-git work tree, or an unreadable baseline) |
+| `64` | Usage error (bad directory, bad `--max-cycle-size`, an invalid or unreadable `dallow.yaml`, an unknown `--changed-since` ref, a non-git work tree, or an unreadable baseline) |
 | `69` | No Dart SDK could be located to back the analyzer |
 | `78` | A source file or an internal import (relative, or `package:<this package>/…`) could not be resolved — usually `pub get` has not been run. Reachability results from such a graph would be silently wrong, so dallow refuses unless `--allow-unresolved` is passed |
 
@@ -206,6 +328,28 @@ it silenced was fixed — is silently ignored by default. Pass
 finding so stale directives can be cleaned up (they gate only under
 `--fail-on info`).
 
+## Use as a library
+
+The checks behind the CLI are exported from `package:dallow/dallow.dart`, so a
+custom tool or test can run them directly:
+
+```dart
+import 'package:dallow/dallow.dart';
+
+Future<void> main() async {
+  final findings = await analyze('.', checks: Check.values.toSet());
+  print(Reporter(ReportFormat.markdown).render(findings));
+}
+```
+
+`analyze` covers one package and `analyzeWorkspace` every member of a monorepo.
+Both read the package's `dallow.yaml` unless given a `config:` (a
+`DallowConfig`, for instance `DallowConfig.defaults` to ignore the file).
+Without an explicit `checks:` set they run dead code, dependencies, circular
+imports and duplication; pass `Check.values.toSet()` to add complexity and the
+health score, as the `dallow analyze` command does. See
+[example/example.dart](example/example.dart) for a runnable version.
+
 ## SARIF output
 
 `--format sarif` emits a [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) log
@@ -256,27 +400,50 @@ In a GitHub Actions workflow, upload the file with
    present in the source tree, and the file-level import graph is scanned for
    cycles.
 5. Dart source files are tokenised with the analyzer scanner, normalised, and
-   compared with a suffix array to find repeated token blocks.
+   compared with a suffix array to find repeated token blocks. Tokens are
+   ranked as integers and each block's occurrences are read off the array as
+   one contiguous run, so the check stays fast on large packages.
 6. Function-like bodies already available in the resolved AST are walked for
-   cyclomatic complexity. The health score is:
+   cyclomatic complexity. The health score starts at 100 and loses two capped
+   penalties, both measured against the number of **declared** functions
+   (functions, methods and constructors — closures are measured for
+   complexity but left out of this count, so a codebase full of one-line
+   callbacks does not dilute its problems to nothing):
    `clamp(0, 100, 100 - complexityPenalty - findingsPenalty)`, where
-   `complexityPenalty = min(60, round(sum(max(0, complexity - maxComplexity)) / functionCount * 3))`
-   and `findingsPenalty = min(40, round(weightedFindings / max(functionCount, 1) * 5))`
-   with `weightedFindings = sum(severityWeight * findingWeight)` across the
-   other enabled checks — `severityWeight` is 2 for an error, 1 for a warning
-   and 0.25 for an info, and `findingWeight` is 1 for every finding except a
+   `complexityPenalty = min(60, round(4 * 100 * overLimit / declaredFunctions))`
+   — four points for each percent of functions over the limit, with
+   `overLimit` counting a warning once and an error (twice the limit) twice —
+   and `findingsPenalty = min(40, round(100 * weightedFindings / declaredFunctions))`
+   — one point for each weighted finding per hundred functions.
+   `weightedFindings = sum(severityWeight * findingWeight)` across the other
+   enabled checks: `severityWeight` is 2 for an error, 1 for a warning and
+   0.25 for an info, and `findingWeight` is 1 for every finding except a
    duplicated block, which weighs `blockTokens / minBlockSize` so a copied
-   800-token function costs forty times a repeated 20-token line. The health
-   message reports the weighted total so the score can be traced. Complexity,
-   health and `unresolved-source` findings are excluded from the penalty.
+   800-token function costs sixteen times a repeated 50-token block. The
+   score maps to a grade — A from 90, B from 80, C from 70, D from 60,
+   otherwise F — and the health message reports every input so the score can
+   be traced. Complexity, health and `unresolved-source` findings are excluded
+   from the findings penalty. Because the penalties are proportional, a
+   package with only a few dozen functions swings further on a single finding
+   than a large one.
 7. The same token stream is read for `dallow-ignore` comments, which suppress
    matching findings before the gate runs.
 
 ## Roadmap
 
+The gaps against fallow are tracked in
+[doc/fallow-parity.md](doc/fallow-parity.md). The next ones planned:
+
 - Architecture boundary rules (layered / feature-first presets).
+- Auto-fix for unused dependencies and unused private symbols.
 - Barrel-cycle collapsing: name the barrel that induces a mega-cycle instead of
   listing every member (today `--max-cycle-size` filters it out).
+
+## Contributing
+
+Issues and pull requests are welcome at
+<https://github.com/LeeMatthewHiggins/dallow/issues>. Before opening a pull
+request, run `dart format .`, `dart analyze` and `dart test`.
 
 ## License
 
