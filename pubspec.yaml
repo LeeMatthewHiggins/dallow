@@ -2,7 +2,7 @@ name: dallow
 description: >-
   Codebase intelligence for Dart and Flutter. Finds unreachable dead code,
   dependency drift, circular imports, duplicate blocks, and complexity hot spots.
-version: 0.3.0
+version: 0.4.0
 repository: https://github.com/LeeMatthewHiggins/dallow
 issue_tracker: https://github.com/LeeMatthewHiggins/dallow/issues
 

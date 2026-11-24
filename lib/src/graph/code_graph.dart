@@ -194,6 +194,13 @@ class CodeGraph {
   final Set<CodeNode> _exportedApi = {};
   final List<FunctionComplexity> _functions = [];
   final List<ResolutionProblem> _resolutionProblems = [];
+  final Set<CodeNode> _unownedReferences = {};
+
+  /// Symbols referenced from code that no node owns — chiefly the members of
+  /// an unnamed extension, which cannot be named and so cannot be traced to a
+  /// caller. Such code is usable anywhere in its library, so everything it
+  /// references is a reachability root.
+  Set<CodeNode> get unownedReferences => _unownedReferences;
 
   /// Files and directives the analyzer could not resolve while building this
   /// graph. Non-empty means reachability results are untrustworthy.
@@ -391,8 +398,7 @@ class CodeGraph {
   /// default type, so a platform implementation's methods and fields are
   /// reachable exactly when the default's are.
   void _linkAlternateMembers(Element? defaultType, Element alternateType) {
-    if (defaultType is! InterfaceElement ||
-        alternateType is! InterfaceElement) {
+    if (defaultType is! InstanceElement || alternateType is! InstanceElement) {
       return;
     }
     final members = <Element>[
@@ -714,7 +720,10 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     final variables = node.fields.variables;
     final first =
         variables.isEmpty ? null : variables.first.declaredFragment?.element;
-    _withOwner(first, () => node.fields.type?.accept(this));
+    _withOwner(first, () {
+      node.metadata.accept(this);
+      node.fields.type?.accept(this);
+    });
     for (final variable in variables) {
       _withOwner(
           variable.declaredFragment?.element, () => variable.accept(this));
@@ -747,7 +756,10 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     final variables = node.variables.variables;
     final first =
         variables.isEmpty ? null : variables.first.declaredFragment?.element;
-    _withOwner(first, () => node.variables.type?.accept(this));
+    _withOwner(first, () {
+      node.metadata.accept(this);
+      node.variables.type?.accept(this);
+    });
     for (final variable in variables) {
       _withOwner(
           variable.declaredFragment?.element, () => variable.accept(this));
@@ -769,41 +781,79 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitAssignmentExpression(AssignmentExpression node) {
     _recordAssignment(node);
+    _record(node.element);
     super.visitAssignmentExpression(node);
   }
 
   @override
   void visitPrefixExpression(PrefixExpression node) {
     _recordAssignment(node);
+    _record(node.element);
     super.visitPrefixExpression(node);
   }
 
   @override
   void visitPostfixExpression(PostfixExpression node) {
     _recordAssignment(node);
+    _record(node.element);
     super.visitPostfixExpression(node);
+  }
+
+  // An operator, a `call()` and a pattern's getter are invoked without their
+  // name appearing as an identifier: the analyzer resolves each onto the
+  // expression that uses it.
+
+  @override
+  void visitBinaryExpression(BinaryExpression node) {
+    _record(node.element);
+    super.visitBinaryExpression(node);
+  }
+
+  @override
+  void visitIndexExpression(IndexExpression node) {
+    _record(node.element);
+    super.visitIndexExpression(node);
+  }
+
+  @override
+  void visitFunctionExpressionInvocation(FunctionExpressionInvocation node) {
+    _record(node.element);
+    super.visitFunctionExpressionInvocation(node);
+  }
+
+  @override
+  void visitPatternField(PatternField node) {
+    _record(node.element);
+    super.visitPatternField(node);
   }
 
   /// The target of an assignment carries no element of its own: the analyzer
   /// resolves it onto the enclosing expression instead. A compound form
   /// (`x++`, `x += 1`, `x ??= y`) reads the target, which is a use. A write
-  /// is a use only when it invokes a declared setter — a field that is merely
-  /// assigned and never read stays unused.
+  /// is a use only when it runs declared code — a setter or an `[]=`
+  /// operator — so a field that is merely assigned and never read stays
+  /// unused.
   void _recordAssignment(CompoundAssignmentExpression node) {
     _record(node.readElement);
     final written = node.writeElement;
-    if (written is SetterElement && !CodeGraph._isSyntheticProperty(written)) {
-      _record(written);
-    }
+    final runsDeclaredCode = written is MethodElement ||
+        (written is SetterElement && !CodeGraph._isSyntheticProperty(written));
+    if (runsDeclaredCode) _record(written);
   }
 
   void _record(Element? referenced) {
     if (referenced == null) return;
-    final from = _current;
-    if (from == null) return;
-
     final memberTarget = _graph.memberNodeOf(referenced);
     final topLevelTarget = _graph.ownerOf(referenced);
+
+    final from = _current;
+    if (from == null) {
+      if (memberTarget != null) _graph._unownedReferences.add(memberTarget);
+      if (topLevelTarget != null) {
+        _graph._unownedReferences.add(topLevelTarget);
+      }
+      return;
+    }
 
     // The enclosing scope reaches both the referenced member (if the reference
     // resolves to one) and its top-level owner, so member-level and top-level

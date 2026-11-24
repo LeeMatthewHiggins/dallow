@@ -2,7 +2,7 @@
 
 dallow is a Dart-native take on [fallow](https://github.com/fallow-rs/fallow),
 the codebase-intelligence CLI for TypeScript and JavaScript. This page compares
-dallow 0.3.0 (plus unreleased changes) with fallow 3.45.0 (released
+dallow 0.4.0 with fallow 3.45.0 (released
 2026-11-20), based on fallow's README and its documentation at
 <https://fallow.tools/docs/>.
 
@@ -96,7 +96,7 @@ that pin different constraints for the same dependency.
 | `re-export-cycle` | Export edges are part of the cycle graph | Partial: not reported separately |
 | `package-cycle` | None | No |
 | `circularDependencies.allow` | `--max-cycle-size` | Partial |
-| `boundary-violation`, zones, rules, four presets | None (on the roadmap) | No |
+| `boundary-violation`, zones, rules, four presets | None | No |
 | `fallow guard`, rule packs, `policy-violation` | None | No |
 
 ### Duplication
@@ -115,8 +115,8 @@ that pin different constraints for the same dependency.
 | Stable `dup:<hash>` handles, clone families, extract suggestions | A fingerprint is used by the baseline only | No |
 
 With the same defaults as fallow — a 50-token minimum and tests left out —
-dallow's duplication output is comparable in volume: run on its own source,
-6 of dallow's 15 findings are duplicated blocks.
+dallow's duplication output is comparable in volume. See
+[open-source-runs.md](open-source-runs.md) for counts on real projects.
 
 ### Complexity and health
 
@@ -262,8 +262,7 @@ Ordered by how much each closes the gap for a typical Dart or Flutter team.
    file is one finding instead of many.
 5. **Auto-fix** for the safe cases: unused dependencies in `pubspec.yaml` and
    unused private top-level symbols, with `--dry-run`.
-6. **Architecture boundaries** with layered and feature-first presets
-   (already on the roadmap).
+6. **Architecture boundaries** with layered and feature-first presets.
 7. **Cognitive complexity and hotspots.** Churn multiplied by complexity is
    fallow's most actionable health output.
 8. **CI formats**: `github-annotations` and `codeclimate`, plus a published

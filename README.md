@@ -14,19 +14,43 @@ dallow is a Dart-native take on the ideas behind
 [fallow](https://github.com/fallow-rs/fallow) (codebase intelligence for
 TypeScript/JavaScript). Where fallow's default analysis is syntactic, dallow
 always builds on the Dart `analyzer`'s **resolved element model** — so the
-"what is connected to what?" graph is real, not heuristic. See
-[doc/fallow-parity.md](doc/fallow-parity.md) for a feature-by-feature
-comparison of the two tools.
+"what is connected to what?" graph is real, not heuristic.
+
+- [doc/open-source-runs.md](doc/open-source-runs.md): what dallow reports on
+  the Flutter framework, dart_style, Wonderous, bloc and shelf.
+- [doc/fallow-parity.md](doc/fallow-parity.md): a feature-by-feature
+  comparison with fallow.
 
 ## What it checks
 
 | Check | What it finds |
 | --- | --- |
-| **dead-code** | Top-level symbols (functions, classes, enums, mixins, extensions, typedefs, variables) **and class members** (methods, getters/setters, fields) unreachable from any entrypoint. Entrypoints are your `bin/`, `test/`, `example/` files and the public API surface under `lib/`. Only private symbols and `lib/src/` internals are reported — a legitimately-exported public symbol, or a public member of a public-API class, is never flagged as dead. Members reached through inheritance (an `@override`, an interface implementation, or a member overridden by a subtype) are kept, since they may be dispatched dynamically; a field initialised through a `this.x` constructor parameter counts as used. A conditional `import`/`export` (`if (dart.library.io) …`) keeps every alternate reachable whenever its default branch is, so platform-specific implementations are never reported dead. |
-| **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
+| **dead-code** | Top-level symbols and class members that no entrypoint can reach. Entrypoints are `bin/`, `test/` and `example/` files and the public API under `lib/`. Only private symbols and `lib/src/` internals are reported — see [What counts as used](#what-counts-as-used). |
+| **deps** | Dependencies declared in `pubspec.yaml` but never imported, packages imported but not declared, and dev-dependencies imported from `lib/`. Imports are read from parsed directives, so source text held in a string is not counted. Federated plugin implementations (`<base>_web`, `<base>_android`, `<base>_platform_interface`, …) are not flagged unused when their base plugin is declared. |
 | **circular** | Import cycles between files, found as strongly-connected components of the import graph. |
 | **duplication** | Structurally duplicated Dart token blocks. Identifiers and literals are normalised so copied code with renamed variables still matches; keywords and punctuation stay exact to avoid noisy matches. Directives (`import`, `export`, `part`, `library`) are skipped, so files that share an import header are not reported as duplicating each other. Test code (`test/`, `integration_test/`, `test_driver/`) is left out unless `--include-tests` is passed: tests repeat their arrange-and-assert scaffolding by design. |
-| **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits an info-level project health score with a letter grade. |
+| **complexity** | Cyclomatic complexity for functions, methods, constructors, and closures. Complexity starts at `1` per body and adds one for each `if`, `for`, `while`, `do`, `case`, `catch`, `&&`, `||`, `?:`, and `??`. Functions above `--max-complexity` are warnings; functions at least twice the threshold are errors. The check also emits a project [health score](#health-score). |
+
+### What counts as used
+
+The dead-code check prefers a miss to a false alarm. Beyond a direct
+reference, a symbol is kept when:
+
+- it is public API: exported from `lib/`, or a public member of an exported
+  type or of any supertype of one;
+- it takes part in inheritance: it overrides a supertype member, is
+  overridden by a subtype, or implements an interface;
+- it is used without being named: an operator, a `call()` method, a getter
+  read through an object pattern, or a field set through a `this.x`
+  constructor parameter;
+- it is the counterpart of a reachable symbol in a conditional import
+  (`if (dart.library.io) …`), so platform implementations stay alive;
+- it is a getter whose setter is in use;
+- it is annotated `@pragma('vm:entry-point')`, belongs to a type that is, or
+  is a field of a `dart:ffi` `Struct` or `Union`;
+- it is referenced from generated code or from an unnamed extension.
+
+A field that is assigned but never read is reported.
 
 ### Finding kinds
 
@@ -184,10 +208,6 @@ generated code as well. Generated files must exist on disk — run
 `dart run build_runner build` first if they are not committed, otherwise their
 `part` directives cannot be resolved and dallow exits `78`.
 
-Symbols annotated `@pragma('vm:entry-point')`, and the members of a type so
-annotated, are treated as entrypoints: the VM or native code calls them
-without a Dart reference, so they are never reported dead.
-
 ### Monorepos
 
 By default dallow analyses a single package. Pointed at a monorepo root it would
@@ -224,7 +244,7 @@ findings carry a `package` field. The exit code honours `--fail-on` evaluated
 ### Version
 
 `dallow --version` prints the dallow version and the resolved `analyzer`
-version, for example `dallow 0.3.0 (analyzer 14.7.0)`. `tool/build.sh` bakes
+version, for example `dallow 0.4.0 (analyzer 14.7.0)`. `tool/build.sh` bakes
 the analyzer version into each compiled binary.
 
 ### Exit codes
@@ -264,8 +284,8 @@ tips. `<ref>` can be a branch, tag, or SHA (`origin/main`, `HEAD~1`, …).
 Findings that aren't tied to a single source line — whole-package signals with
 no file, and dependency-hygiene findings against `pubspec.yaml` — are **always
 kept**, so a newly broken dependency still fails the gate. A finding that sits
-*unchanged* in a file you *did* touch is also kept (filtering is at file
-granularity; line-level diffing is a possible future refinement). If the
+*unchanged* in a file you *did* touch is also kept: filtering is at file
+granularity. If the
 package isn't inside a git work tree, or `<ref>` doesn't resolve, dallow prints
 a clear message to stderr and exits `64` rather than crashing.
 
@@ -393,9 +413,7 @@ In a GitHub Actions workflow, upload the file with
    references between them become edges (synthetic accessors are unwrapped to
    their backing field).
 3. Entrypoints seed a reachability walk over that graph — anything unreached and
-   not part of the public API is a dead-code candidate. Members reachable
-   through inheritance (overrides, interface members) are kept as roots so
-   dynamically-dispatched code is never false-flagged.
+   not part of the public API is a dead-code candidate.
 4. `pubspec.yaml` is cross-referenced against the `package:` imports actually
    present in the source tree, and the file-level import graph is scanned for
    cycles.
@@ -404,30 +422,37 @@ In a GitHub Actions workflow, upload the file with
    ranked as integers and each block's occurrences are read off the array as
    one contiguous run, so the check stays fast on large packages.
 6. Function-like bodies already available in the resolved AST are walked for
-   cyclomatic complexity. The health score starts at 100 and loses two capped
-   penalties, both measured against the number of **declared** functions
-   (functions, methods and constructors — closures are measured for
-   complexity but left out of this count, so a codebase full of one-line
-   callbacks does not dilute its problems to nothing):
-   `clamp(0, 100, 100 - complexityPenalty - findingsPenalty)`, where
-   `complexityPenalty = min(60, round(4 * 100 * overLimit / declaredFunctions))`
-   — four points for each percent of functions over the limit, with
-   `overLimit` counting a warning once and an error (twice the limit) twice —
-   and `findingsPenalty = min(40, round(100 * weightedFindings / declaredFunctions))`
-   — one point for each weighted finding per hundred functions.
-   `weightedFindings = sum(severityWeight * findingWeight)` across the other
-   enabled checks: `severityWeight` is 2 for an error, 1 for a warning and
-   0.25 for an info, and `findingWeight` is 1 for every finding except a
-   duplicated block, which weighs `blockTokens / minBlockSize` so a copied
-   800-token function costs sixteen times a repeated 50-token block. The
-   score maps to a grade — A from 90, B from 80, C from 70, D from 60,
-   otherwise F — and the health message reports every input so the score can
-   be traced. Complexity, health and `unresolved-source` findings are excluded
-   from the findings penalty. Because the penalties are proportional, a
-   package with only a few dozen functions swings further on a single finding
-   than a large one.
+   cyclomatic complexity, which feeds the [health score](#health-score).
 7. The same token stream is read for `dallow-ignore` comments, which suppress
    matching findings before the gate runs.
+
+## Health score
+
+The `complexity` check reports a score from 0 to 100 and a grade: A from 90,
+B from 80, C from 70, D from 60, otherwise F.
+
+```text
+score = clamp(0, 100, 100 - complexityPenalty - findingsPenalty)
+
+complexityPenalty = min(60, round(4 * 100 * overLimit / declaredFunctions))
+findingsPenalty   = min(40, round(100 * weightedFindings / declaredFunctions))
+```
+
+- **`declaredFunctions`** counts functions, methods and constructors.
+  Closures are measured for complexity but left out of this count, so a
+  codebase full of one-line callbacks does not dilute its problems.
+- **`overLimit`** counts each function over `--max-complexity` once, or twice
+  when it is at least double the limit. Four points are lost for each percent
+  of functions over the limit.
+- **`weightedFindings`** sums the findings of the other enabled checks: 2 for
+  an error, 1 for a warning, 0.25 for an info. A duplicated block is further
+  multiplied by `blockTokens / minBlockSize`, so a copied 800-token function
+  costs sixteen times a repeated 50-token block. One point is lost for each
+  weighted finding per hundred functions.
+
+The health message reports every input. Because both penalties are
+proportional, a package with a few dozen functions moves further on a single
+finding than a large one.
 
 ## Roadmap
 
@@ -436,8 +461,8 @@ The gaps against fallow are tracked in
 
 - Architecture boundary rules (layered / feature-first presets).
 - Auto-fix for unused dependencies and unused private symbols.
-- Barrel-cycle collapsing: name the barrel that induces a mega-cycle instead of
-  listing every member (today `--max-cycle-size` filters it out).
+- Barrel-cycle collapsing: name the barrel that induces a large cycle instead
+  of listing every member.
 
 ## Contributing
 

@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/features.dart';
+import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/util/dart_files.dart';
 import 'package:path/path.dart' as p;
@@ -10,7 +13,9 @@ import 'package:pubspec_parse/pubspec_parse.dart';
 /// plugins resolved by the Flutter toolchain).
 const _toolingPackages = {
   'flutter',
+  'sky_engine',
   'build_runner',
+  'build_config',
   'very_good_analysis',
   'lints',
   'flutter_lints',
@@ -32,14 +37,8 @@ const _federatedSuffixes = [
   '_linux',
 ];
 
-/// Matches a `package:` specifier at the start of an `import`/`export`
-/// directive line, so mentions inside comments or string literals are not
-/// mistaken for real usage. Alternative specifiers of a conditional import
-/// (the `if (...) '...'` branch) are not matched.
-final _packageImport = RegExp(
-  r'''^\s*(?:import|export)\s+['"]package:([a-zA-Z0-9_]+)/''',
-  multiLine: true,
-);
+/// Captures the package name of a `package:` URI.
+final _packageUri = RegExp('^package:([a-zA-Z0-9_]+)/');
 
 /// Cross-references declared `pubspec.yaml` dependencies against the
 /// `package:` imports actually present in the source tree.
@@ -62,9 +61,7 @@ class DependencyCheck {
     for (final path in listDartFiles(rootPath)) {
       final relative = p.relative(path, from: rootPath);
       final underLib = isUnderLib(relative);
-      final content = File(path).readAsStringSync();
-      for (final match in _packageImport.allMatches(content)) {
-        final name = match.group(1)!;
+      for (final name in _importedPackages(path)) {
         usedAnywhere.add(name);
         if (underLib) usedUnderLib.add(name);
       }
@@ -84,6 +81,25 @@ class DependencyCheck {
     return findings
       ..removeWhere((f) => ignored.contains(f.symbol))
       ..sort((a, b) => (a.symbol ?? '').compareTo(b.symbol ?? ''));
+  }
+
+  /// The packages the file at [path] imports or exports.
+  ///
+  /// Read from the parsed directives, so a `package:` URI inside a comment or
+  /// a string literal — source text held in a test, say — is not mistaken for
+  /// a real import. The alternatives of a conditional import are not counted.
+  Iterable<String> _importedPackages(String path) sync* {
+    final unit = parseString(
+      content: File(path).readAsStringSync(),
+      featureSet: FeatureSet.latestLanguageVersion(),
+      path: path,
+      throwIfDiagnostics: false,
+    ).unit;
+    for (final directive in unit.directives.whereType<NamespaceDirective>()) {
+      final uri = directive.uri.stringValue;
+      final match = uri == null ? null : _packageUri.firstMatch(uri);
+      if (match != null) yield match.group(1)!;
+    }
   }
 
   Iterable<Finding> _unusedDependencies(

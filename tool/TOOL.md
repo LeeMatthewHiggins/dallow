@@ -83,7 +83,7 @@ or the line above it, suppresses that finding.
 
 `.dw/tools/dallow/bin/run --version` prints the dallow version and the
 `analyzer` version the binary was built with, for example
-`dallow 0.3.0 (analyzer 14.7.0)`. Check it first if dallow crashes on new
+`dallow 0.4.0 (analyzer 14.7.0)`. Check it first if dallow crashes on new
 Dart syntax: an old analyzer cannot read Dart 3.10 dot shorthands.
 
 ### Exit codes

@@ -27,7 +27,13 @@ import 'package:dallow/src/graph/code_graph.dart';
 ///
 /// **Declared entrypoints** — any symbol annotated
 /// `@pragma('vm:entry-point')`, and every member of a type so annotated — are
-/// roots too: the VM or native code calls them without a Dart reference.
+/// roots too: the VM or native code calls them without a Dart reference. So
+/// are the fields of a `dart:ffi` `Struct` or `Union`, which describe a native
+/// memory layout whether or not Dart reads each one.
+///
+/// A getter is not reported while the setter of the same property is in use:
+/// the pair is one property, and Dart style asks for a getter wherever there
+/// is a setter.
 ///
 /// The check is deliberately conservative: a false "dead member" is worse than
 /// a miss, so anything reachable through inheritance or an annotation is kept.
@@ -36,7 +42,8 @@ class DeadCodeCheck {
 
   List<Finding> run(CodeGraph graph) {
     final participants = _inheritanceParticipants(graph);
-    final reachable = _reachableFrom(graph, participants);
+    final surface = _PublicSurface(graph);
+    final reachable = _reachableFrom(graph, participants, surface);
 
     final findings = <Finding>[];
 
@@ -66,7 +73,8 @@ class DeadCodeCheck {
       // its members too would be redundant noise.
       final owner = node.owner;
       if (owner != null && !reachable.contains(owner)) continue;
-      if (!_memberReportable(node, graph)) continue;
+      if (!_memberReportable(node, surface)) continue;
+      if (_setterIsInUse(node, graph, reachable)) continue;
 
       final qualified = '${node.enclosingName}.${node.name}';
       findings.add(
@@ -86,18 +94,23 @@ class DeadCodeCheck {
     return findings;
   }
 
-  Set<CodeNode> _reachableFrom(CodeGraph graph, Set<CodeNode> participants) {
+  Set<CodeNode> _reachableFrom(
+    CodeGraph graph,
+    Set<CodeNode> participants,
+    _PublicSurface surface,
+  ) {
     final seeds = <CodeNode>[
       ...graph.nodes.where(
-        (n) => n.isConsumerFile || n.isPublicApi || _isEntryPoint(n),
+        (n) => n.isConsumerFile || n.isPublicApi || _isUsedFromOutsideDart(n),
       ),
       ...graph.exportedApi,
+      ...graph.unownedReferences,
       ...graph.memberNodes.where(
         (m) =>
             m.isConsumerFile ||
             participants.contains(m) ||
-            _isEntryPoint(m) ||
-            (!m.isPrivate && _enclosingIsPublicSurface(m, graph)),
+            _isUsedFromOutsideDart(m) ||
+            (!m.isPrivate && surface.exposesMembersOf(m.owner)),
       ),
     ];
 
@@ -111,12 +124,38 @@ class DeadCodeCheck {
     return reachable;
   }
 
-  /// True when [node], or the type that declares it, carries
-  /// `@pragma('vm:entry-point')`.
-  bool _isEntryPoint(CodeNode node) {
+  /// True when the VM or native code uses [node] without a Dart reference:
+  /// it, or the type that declares it, carries `@pragma('vm:entry-point')`,
+  /// or it is a field of a native `Struct` or `Union`.
+  bool _isUsedFromOutsideDart(CodeNode node) {
     final owner = node.owner;
-    return _hasEntryPointPragma(node.element) ||
-        (owner != null && _hasEntryPointPragma(owner.element));
+    if (_hasEntryPointPragma(node.element)) return true;
+    if (owner == null) return false;
+    return _hasEntryPointPragma(owner.element) ||
+        _isNativeLayout(owner.element);
+  }
+
+  bool _isNativeLayout(Element type) =>
+      type is InterfaceElement &&
+      type.allSupertypes.any(
+        (supertype) =>
+            supertype.element.library.uri == _ffiLibrary &&
+            _nativeLayoutTypes.contains(supertype.element.name),
+      );
+
+  static final Uri _ffiLibrary = Uri.parse('dart:ffi');
+  static const Set<String> _nativeLayoutTypes = {'Struct', 'Union'};
+
+  /// True when [node] is a getter whose matching setter is reachable.
+  bool _setterIsInUse(
+    CodeNode node,
+    CodeGraph graph,
+    Set<CodeNode> reachable,
+  ) {
+    final element = node.element;
+    if (element is! GetterElement) return false;
+    final setter = graph.memberNodeOf(element.correspondingSetter);
+    return setter != null && reachable.contains(setter);
   }
 
   bool _hasEntryPointPragma(Element element) => element.metadata.annotations
@@ -128,14 +167,8 @@ class DeadCodeCheck {
   /// part of the public API surface (e.g. a `lib/src` class). Public members of
   /// public-API classes are never reportable — the same rule as for top-level
   /// public symbols.
-  bool _memberReportable(CodeNode node, CodeGraph graph) =>
-      node.isPrivate || !_enclosingIsPublicSurface(node, graph);
-
-  bool _enclosingIsPublicSurface(CodeNode member, CodeGraph graph) {
-    final owner = member.owner;
-    if (owner == null) return false;
-    return owner.isPublicApi || graph.exportedApi.contains(owner);
-  }
+  bool _memberReportable(CodeNode node, _PublicSurface surface) =>
+      node.isPrivate || !surface.exposesMembersOf(node.owner);
 
   /// Members that take part in an inheritance relationship and so may be
   /// reached through dynamic dispatch: anything carrying an inheritance-signal
@@ -219,4 +252,28 @@ class DeadCodeCheck {
     if (byFile != 0) return byFile;
     return (a.line ?? 0).compareTo(b.line ?? 0);
   }
+}
+
+/// The types whose public members external code can call.
+///
+/// That is every type in the public API, plus every supertype of one: a
+/// member declared on an unexported base class is still callable through an
+/// exported subclass (`Request.isEmpty`, declared on an internal `Message`).
+class _PublicSurface {
+  _PublicSurface(CodeGraph graph) {
+    for (final node in graph.nodes) {
+      if (!node.isPublicApi && !graph.exportedApi.contains(node)) continue;
+      _types.add(node.element);
+      final element = node.element;
+      if (element is! InterfaceElement) continue;
+      _types.addAll(element.allSupertypes.map((type) => type.element));
+    }
+  }
+
+  final Set<Element> _types = {};
+
+  /// Whether the public members of the type behind [owner] are reachable
+  /// from outside the package.
+  bool exposesMembersOf(CodeNode? owner) =>
+      owner != null && _types.contains(owner.element);
 }

@@ -215,6 +215,114 @@ void main() {
     });
   });
 
+  group('public surface and unnamed extensions', () {
+    late List<Finding> findings;
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      findings = await analyze(
+        p.absolute('test', 'fixtures', 'surface'),
+        checks: {Check.deadCode, Check.dependencies},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag a public member inherited by an exported type', () {
+      expect(symbols, isNot(contains('Base.inheritedGetter')));
+    });
+
+    test('still flags a private member of that base type', () {
+      expect(symbols, contains('Base._privateUnused'));
+    });
+
+    test('still flags a public member of a type nothing exported extends', () {
+      expect(symbols, contains('Internal.unusedPublic'));
+    });
+
+    test('keeps symbols referenced only from an unnamed extension', () {
+      expect(symbols, isNot(contains('helperForUnnamed')));
+      expect(symbols, isNot(contains('NamedFlags.isOff')));
+      expect(symbols, isNot(contains('NamedFlags.isOn')));
+    });
+
+    test('still flags an extension member nothing references', () {
+      expect(symbols, contains('NamedFlags.isNeverRead'));
+    });
+
+    test('keeps an extension member of a conditional import alternate', () {
+      expect(symbols, isNot(contains('PlatformLabel.label')));
+      expect(symbols, isNot(contains('_format')));
+    });
+
+    test('still flags an alternate extension member nothing calls', () {
+      expect(symbols, contains('PlatformLabel.neverCalled'));
+    });
+
+    test('does not count an import inside a string literal', () {
+      expect(
+        findings.where((f) => f.kind == CheckKind.missingDependency),
+        isEmpty,
+      );
+    });
+  });
+
+  group('members used without being named', () {
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'operators'),
+        checks: {Check.deadCode},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag an operator that an expression invokes', () {
+      expect(symbols, isNot(contains('Vector.+')));
+      expect(symbols, isNot(contains('Vector.[]')));
+      expect(symbols, isNot(contains('Vector.unary-')));
+      expect(symbols, isNot(contains('Vector.-')));
+    });
+
+    test('does not flag an operator used through an assignment', () {
+      expect(symbols, isNot(contains('Vector.^')));
+      expect(symbols, isNot(contains('Grid.[]=')));
+    });
+
+    test('does not flag a call() method invoked on an instance', () {
+      expect(symbols, isNot(contains('Vector.call')));
+    });
+
+    test('does not flag a getter read through an object pattern', () {
+      expect(symbols, isNot(contains('Vector.magnitude')));
+    });
+
+    test('still flags an operator nothing invokes', () {
+      expect(symbols, contains('Vector.*'));
+    });
+
+    test('does not flag a constant used only as a field annotation', () {
+      expect(symbols, isNot(contains('_marker')));
+    });
+
+    test('does not flag a getter whose setter is in use', () {
+      expect(symbols, isNot(contains('Box.value')));
+    });
+
+    test('still flags an unread getter with no setter in use', () {
+      expect(symbols, contains('Box.neverRead'));
+    });
+
+    test('still flags an unused setter beside a getter that is read', () {
+      expect(symbols.where((s) => s == 'Box._lonely'), hasLength(1));
+    });
+
+    test('does not flag the fields of a native struct', () {
+      expect(symbols, isNot(contains('Layout.width')));
+      expect(symbols, isNot(contains('Layout.height')));
+    });
+  });
+
   group('dependency check', () {
     late List<Finding> findings;
 
