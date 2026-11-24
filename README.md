@@ -1,5 +1,6 @@
 # dallow
 
+[![pub package](https://img.shields.io/pub/v/dallow.svg)](https://pub.dev/packages/dallow)
 [![CI](https://github.com/LeeMatthewHiggins/dallow/actions/workflows/ci.yml/badge.svg)](https://github.com/LeeMatthewHiggins/dallow/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![style: very good analysis](https://img.shields.io/badge/style-very_good_analysis-B22C89.svg)](https://pub.dev/packages/very_good_analysis)
@@ -79,6 +80,12 @@ Flutter. Run `dart pub get` (or `flutter pub get`) in the target package first
 so its imports resolve.
 
 ## Install
+
+```sh
+dart pub global activate dallow
+```
+
+To run the latest commit instead of the latest release:
 
 ```sh
 dart pub global activate --source git https://github.com/LeeMatthewHiggins/dallow
