@@ -15,3 +15,40 @@ class ExportedWidget {
   /// members are reportable even on public-API classes).
   void _unusedInternal() {}
 }
+
+/// A generic public class. Inside it, references to its own members resolve
+/// to members substituted with the type parameter, not to the declarations.
+class GenericBox<T> {
+  T? get value => _value;
+
+  void put(T item) => _store(item);
+
+  void forEach(void Function(void Function(T) store) visit) => visit(_store);
+
+  /// Read and written only inside the generic class → used → clean.
+  T? _value;
+
+  /// Called and torn off only inside the generic class → used → clean.
+  void _store(T item) => _value = item;
+
+  /// Never referenced → FLAGGED.
+  void _unusedInGeneric() {}
+}
+
+/// Fields read only through a compound assignment or an increment.
+class Counter {
+  int next() => ++_count;
+
+  String label() => _label ??= 'counter';
+
+  void reset() => _written = 0;
+
+  /// Read by `++` → used → clean.
+  int _count = 0;
+
+  /// Read by `??=` → used → clean.
+  String? _label;
+
+  /// Only ever assigned, never read → FLAGGED.
+  int _written = 0;
+}

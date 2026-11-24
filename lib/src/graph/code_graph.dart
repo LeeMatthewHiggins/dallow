@@ -568,9 +568,11 @@ class CodeGraph {
   /// Maps a referenced [element] to its member node, or null when it is not a
   /// registered member. A synthetic property accessor (the implicit getter or
   /// setter of a field) is unwrapped to its backing field, so reading or
-  /// writing a field resolves to the field's node.
+  /// writing a field resolves to the field's node. A member referenced inside
+  /// a generic type is a substituted element; it is unwrapped to the
+  /// declaration it was substituted from ([Element.baseElement]).
   CodeNode? memberNodeOf(Element? element) {
-    var current = element;
+    var current = element?.baseElement;
     if (current is PropertyAccessorElement && _isSyntheticProperty(current)) {
       current = current.variable;
     }
@@ -759,6 +761,28 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
   void visitNamedType(NamedType node) {
     _record(node.element);
     super.visitNamedType(node);
+  }
+
+  // The target of `x += 1`, `x ??= v`, `++x` or `x--` is read as well as
+  // written, but its identifier carries no element: the analyzer records
+  // the read on the expression instead. A plain `x = v` reads nothing, so a
+  // field that is only ever assigned stays unreachable.
+  @override
+  void visitAssignmentExpression(AssignmentExpression node) {
+    _record(node.readElement);
+    super.visitAssignmentExpression(node);
+  }
+
+  @override
+  void visitPrefixExpression(PrefixExpression node) {
+    _record(node.readElement);
+    super.visitPrefixExpression(node);
+  }
+
+  @override
+  void visitPostfixExpression(PostfixExpression node) {
+    _record(node.readElement);
+    super.visitPostfixExpression(node);
   }
 
   void _record(Element? referenced) {

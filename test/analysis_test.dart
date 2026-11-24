@@ -99,6 +99,24 @@ void main() {
       expect(symbols, isNot(contains('ExportedWidget._decorate')));
     });
 
+    test('does not flag members used inside a generic class', () {
+      expect(symbols, isNot(contains('GenericBox._value')));
+      expect(symbols, isNot(contains('GenericBox._store')));
+    });
+
+    test('still flags an unused member of a generic class', () {
+      expect(symbols, contains('GenericBox._unusedInGeneric'));
+    });
+
+    test('does not flag a field read by a compound assignment', () {
+      expect(symbols, isNot(contains('Counter._count')));
+      expect(symbols, isNot(contains('Counter._label')));
+    });
+
+    test('still flags a field that is only ever assigned', () {
+      expect(symbols, contains('Counter._written'));
+    });
+
     test('does not flag a private field read internally', () {
       expect(symbols, isNot(contains('InternalService._seed')));
       expect(symbols, isNot(contains('ExportedWidget._suffix')));
@@ -383,7 +401,7 @@ void main() {
         (f) => f.kind == CheckKind.projectHealth,
       );
       expect(health.message, contains('Project health score: 97/100'));
-      expect(health.message, contains('27 function(s) analysed'));
+      expect(health.message, contains('35 function(s) analysed'));
       expect(health.message, contains('complexity penalty 0'));
       expect(health.message, contains('findings penalty 3'));
     });
