@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dallow/dallow.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -168,6 +170,51 @@ void main() {
       );
 
       expect(custom.scansForDuplication('test/a_test.dart'), isTrue);
+    });
+  });
+
+  group('gen-l10n output', () {
+    final localized = p.absolute('test', 'fixtures', 'localized');
+
+    test('files named by l10n.yaml are generated', () {
+      final scope = SourceScope(root: localized, config: DallowConfig.defaults);
+
+      expect(scope.isGenerated('lib/l10n/app_strings.dart'), isTrue);
+      expect(scope.isGenerated('lib/l10n/app_strings_en.dart'), isTrue);
+      expect(scope.isGenerated('lib/l10n/app_strings_zh_Hant.dart'), isTrue);
+    });
+
+    test('a hand-written file beside them is not', () {
+      final scope = SourceScope(root: localized, config: DallowConfig.defaults);
+
+      expect(scope.isGenerated('lib/l10n/app_strings_helpers.dart'), isFalse);
+      expect(scope.isGenerated('lib/src/app_strings.dart'), isFalse);
+    });
+
+    test('dead code is reported only outside the generated files', () async {
+      final findings = await analyze(localized, checks: {Check.deadCode});
+
+      expect(findings.map((f) => f.symbol), ['_unusedHandWritten']);
+    });
+
+    test('the tool defaults apply when pubspec.yaml enables generation', () {
+      final dir = Directory.systemTemp.createTempSync('dallow_l10n_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      File(p.join(dir.path, 'pubspec.yaml')).writeAsStringSync(
+        'name: app\nflutter:\n  generate: true\n',
+      );
+      final scope = SourceScope(root: dir.path, config: DallowConfig.defaults);
+
+      expect(scope.isGenerated('lib/l10n/app_localizations.dart'), isTrue);
+      expect(scope.isGenerated('lib/l10n/app_localizations_en.dart'), isTrue);
+      expect(scope.isGenerated('lib/l10n/other.dart'), isFalse);
+    });
+
+    test('nothing is assumed for a package that does not use gen-l10n', () {
+      final plain = p.absolute('test', 'fixtures', 'generics');
+      final scope = SourceScope(root: plain, config: DallowConfig.defaults);
+
+      expect(scope.isGenerated('lib/l10n/app_localizations.dart'), isFalse);
     });
   });
 

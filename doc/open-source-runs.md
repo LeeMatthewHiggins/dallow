@@ -13,7 +13,7 @@ an Apple silicon laptop with Dart 3.12.2.
 | --- | --- | --- | --- | --- | --- |
 | [Flutter framework](https://github.com/flutter/flutter) (`packages/flutter`) | 3.44.4 | 1,296,000 | 62 s | 2,850 | 69 (D) |
 | [dart_style](https://github.com/dart-lang/dart_style) | 3.1.14 | 31,000 | 10 s | 100 | 81 (B) |
-| [Wonderous](https://github.com/gskinnerTeam/flutter-wonderous-app) | `30ccc36` | 31,000 | 17 s | 242 | 75 (C) |
+| [Wonderous](https://github.com/gskinnerTeam/flutter-wonderous-app) | `30ccc36` | 31,000 | 17 s | 236 | 58 (F) |
 | [bloc](https://github.com/felangel/bloc) (13 packages) | `af38411` | 46,000 | 39 s | 37 | 82–100 |
 | [shelf](https://github.com/dart-lang/shelf) (9 packages) | `2856b69` | 13,000 | 15 s | 39 | 53–100 |
 
@@ -23,7 +23,7 @@ Findings by kind:
 | --- | --- | --- | --- | --- | --- |
 | Flutter framework | 52 | 9 | 2,076 | 712 | 0 |
 | dart_style | 13 | 3 | 34 | 49 | 0 |
-| Wonderous | 3 | 2 | 230 | 6 | 0 |
+| Wonderous | 3 | 1 | 225 | 6 | 0 |
 | bloc | 0 | 6 | 15 | 2 | 1 |
 | shelf | 1 | 3 | 15 | 10 | 1 |
 
@@ -60,11 +60,14 @@ The findings total also counts one health finding per package.
 
 - **Dead code (3).** Two unused style tokens (`_Text.h1`, `_Corners.lg`) and
   one unused method in a developer tool.
-- **Duplication (230).** 211 are in `lib/logic/data`, where each wonder is
+- **Duplication (225).** 209 are in `lib/logic/data`, where each wonder is
   described by the same literal structure. An `exclude` entry for that
-  directory in `dallow.yaml` leaves 19.
-- **Cycles (2).** One of 114 files, which includes the shared
+  directory in `dallow.yaml` leaves 16. This duplication is what pulls the
+  health score down to 58.
+- **Cycles (1).** One of 114 files, which includes the shared
   `common_libs.dart` barrel.
+- **Generated code.** The `gen-l10n` classes in `lib/l10n` are recognised
+  from `l10n.yaml` and left out.
 
 ### bloc
 

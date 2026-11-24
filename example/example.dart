@@ -9,7 +9,7 @@ import 'package:dallow/dallow.dart';
 /// dallow is primarily a command-line tool (`dallow analyze`); this shows the
 /// same analysis driven from Dart code.
 Future<void> main() async {
-  final findings = await analyze('.', checks: Check.values.toSet());
+  final findings = await analyze('.');
 
   print(Reporter(ReportFormat.console).render(findings));
 

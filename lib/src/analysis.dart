@@ -45,6 +45,15 @@ enum Check {
   duplication,
   complexity;
 
+  /// Every check, which is what [analyze] runs unless told otherwise.
+  static const Set<Check> all = {
+    deadCode,
+    dependencies,
+    circularImports,
+    duplication,
+    complexity,
+  };
+
   bool get needsGraph =>
       this == Check.deadCode ||
       this == Check.circularImports ||
@@ -59,16 +68,12 @@ enum Check {
 /// Settings come from [config], or from the package's `dallow.yaml` when
 /// [config] is omitted. An explicit [maxCycleSize], [minBlockSize],
 /// [maxComplexity], [reportGenerated] or [duplicationIncludesTests] argument
-/// overrides the configured
-/// value. Throws [ConfigException] when the configuration file is invalid.
+/// overrides the configured value. Throws [ConfigException] when the
+/// configuration file is invalid.
+// dallow-ignore: duplicate-code mirrored by analyzeWorkspace
 Future<List<Finding>> analyze(
   String rootPath, {
-  Set<Check> checks = const {
-    Check.deadCode,
-    Check.dependencies,
-    Check.circularImports,
-    Check.duplication,
-  },
+  Set<Check> checks = Check.all,
   int? maxCycleSize,
   int? minBlockSize,
   int? maxComplexity,
@@ -228,12 +233,7 @@ Finding _unresolvedFinding(ResolutionProblem problem) => Finding(
 /// `dallow.yaml`, falling back to the one at the workspace [root].
 Future<List<Finding>> analyzeWorkspace(
   String root, {
-  Set<Check> checks = const {
-    Check.deadCode,
-    Check.dependencies,
-    Check.circularImports,
-    Check.duplication,
-  },
+  Set<Check> checks = Check.all,
   int? maxCycleSize,
   int? minBlockSize,
   int? maxComplexity,

@@ -66,9 +66,9 @@ with gaps listed, **No** means missing.
 
 The Dart counterpart of fallow's framework plugins is awareness of generated
 code and of entrypoints declared by annotation. dallow leaves findings in
-generated files (`*.g.dart`, `*.freezed.dart`, banner-marked files, …) out of
-the report while still resolving them into the graph, and treats
-`@pragma('vm:entry-point')` as an entrypoint. It has no plugin mechanism, so
+generated files (`*.g.dart`, `*.freezed.dart`, `gen-l10n` output,
+banner-marked files, …) out of the report while still resolving them into the
+graph, and treats `@pragma('vm:entry-point')` as an entrypoint. It has no plugin mechanism, so
 other annotation-driven entrypoints (route generators, dependency-injection
 registrations that are not yet generated) are not recognised.
 

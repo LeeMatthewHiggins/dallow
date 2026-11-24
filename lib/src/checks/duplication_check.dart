@@ -1,8 +1,5 @@
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:analyzer/dart/analysis/features.dart';
-import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:dallow/src/finding.dart';
@@ -31,19 +28,33 @@ class DuplicationCheck {
     bool Function(String relativePath)? include,
   }) {
     final blockSize = minBlockSize ?? defaultDuplicateBlockSize;
-    final sourceRoot = _sourceRoot(rootPath);
-    final tokens = <_LexToken>[];
+    final tokens = _tokensUnder(rootPath, include);
+    if (tokens.length < blockSize * 2) return const [];
 
-    for (final path in _dartFiles(rootPath)) {
+    return _repeatedBlocks(tokens, blockSize)..sort(compareFindingsByLocation);
+  }
+
+  /// The normalised tokens of every included file, each file closed by a
+  /// sentinel so that no block spans two files.
+  List<_LexToken> _tokensUnder(
+    String rootPath,
+    bool Function(String relativePath)? include,
+  ) {
+    final sourceRoot = sourceRootOf(rootPath);
+    final tokens = <_LexToken>[];
+    for (final path in dartFilesAt(rootPath)) {
       final relativePath = p.relative(path, from: sourceRoot);
       if (include != null && !include(relativePath)) continue;
       tokens
         ..addAll(_scanFile(path, relativePath))
         ..add(_LexToken(_sentinel(path), relativePath, -1, -1));
     }
+    return tokens;
+  }
 
-    if (tokens.length < blockSize * 2) return const [];
-
+  /// One finding per repeated block, longest first, so a block already
+  /// reported is not reported again as a shorter block inside it.
+  List<Finding> _repeatedBlocks(List<_LexToken> tokens, int blockSize) {
     final index = _SuffixIndex(tokens);
     final candidates = index.candidates(blockSize)
       ..sort((a, b) => b.length.compareTo(a.length));
@@ -55,7 +66,6 @@ class DuplicationCheck {
       if (covered[candidate.start] == 1 || covered[candidate.other] == 1) {
         continue;
       }
-
       final matches = index.matchesOf(candidate);
       if (!seen.add(matches.key)) continue;
 
@@ -63,20 +73,11 @@ class DuplicationCheck {
       if (occurrences.length < 2) continue;
 
       for (final occurrence in occurrences) {
-        covered.fillRange(
-          occurrence.index,
-          occurrence.index + candidate.length,
-          1,
-        );
+        final end = occurrence.index + candidate.length;
+        covered.fillRange(occurrence.index, end, 1);
       }
       findings.add(_findingFor(occurrences, candidate.length, blockSize));
     }
-
-    findings.sort((a, b) {
-      final fileOrder = (a.file ?? '').compareTo(b.file ?? '');
-      if (fileOrder != 0) return fileOrder;
-      return (a.line ?? 0).compareTo(b.line ?? 0);
-    });
     return findings;
   }
 
@@ -137,28 +138,8 @@ class DuplicationCheck {
     return false;
   }
 
-  List<String> _dartFiles(String rootPath) {
-    final file = File(rootPath);
-    if (file.existsSync() && rootPath.endsWith('.dart')) return [file.path];
-    return listDartFiles(rootPath);
-  }
-
-  String _sourceRoot(String rootPath) {
-    final file = File(rootPath);
-    if (file.existsSync() && rootPath.endsWith('.dart')) {
-      return p.dirname(file.path);
-    }
-    return rootPath;
-  }
-
   List<_LexToken> _scanFile(String path, String relativePath) {
-    final content = File(path).readAsStringSync();
-    final parsed = parseString(
-      content: content,
-      featureSet: FeatureSet.latestLanguageVersion(),
-      path: path,
-      throwIfDiagnostics: false,
-    );
+    final parsed = parseDartFile(path);
 
     // Directives are excluded: two files that import the same packages are
     // not duplicating each other, and with URIs normalised to `<string>`
@@ -203,20 +184,12 @@ class DuplicationCheck {
   }
 
   String _normalise(Token token) {
-    if (token.isIdentifier) return '<identifier>';
-    final type = token.type;
-    if (type == TokenType.INT ||
-        type == TokenType.INT_WITH_SEPARATORS ||
-        type == TokenType.DOUBLE ||
-        type == TokenType.DOUBLE_WITH_SEPARATORS ||
-        type == TokenType.HEXADECIMAL ||
-        type == TokenType.HEXADECIMAL_WITH_SEPARATORS) {
-      return '<number>';
+    if (token.isIdentifier) return _Placeholder.identifier;
+    if (_Placeholder.numberTypes.contains(token.type)) {
+      return _Placeholder.number;
     }
-    if (type == TokenType.STRING ||
-        type == TokenType.STRING_INTERPOLATION_EXPRESSION ||
-        type == TokenType.STRING_INTERPOLATION_IDENTIFIER) {
-      return '<string>';
+    if (_Placeholder.stringTypes.contains(token.type)) {
+      return _Placeholder.string;
     }
     return token.lexeme;
   }
@@ -248,6 +221,29 @@ class DuplicationCheck {
     }
     return false;
   }
+}
+
+/// What a token is replaced with before comparison, so that blocks differing
+/// only in their names and literal values still match.
+abstract final class _Placeholder {
+  static const identifier = '<identifier>';
+  static const number = '<number>';
+  static const string = '<string>';
+
+  static const Set<TokenType> numberTypes = {
+    TokenType.INT,
+    TokenType.INT_WITH_SEPARATORS,
+    TokenType.DOUBLE,
+    TokenType.DOUBLE_WITH_SEPARATORS,
+    TokenType.HEXADECIMAL,
+    TokenType.HEXADECIMAL_WITH_SEPARATORS,
+  };
+
+  static const Set<TokenType> stringTypes = {
+    TokenType.STRING,
+    TokenType.STRING_INTERPOLATION_EXPRESSION,
+    TokenType.STRING_INTERPOLATION_IDENTIFIER,
+  };
 }
 
 /// A suffix array over the normalised token stream, with the length of the

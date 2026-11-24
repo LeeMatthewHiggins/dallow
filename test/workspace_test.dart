@@ -79,7 +79,10 @@ void main() {
       // here (not in discovery), so drive the full path to keep the fixtures
       // honest. A clean run also proves every selected member parsed.
       final findings = await analyzeWorkspace(root);
-      expect(findings, isEmpty);
+      expect(
+        findings.where((f) => f.kind != CheckKind.projectHealth),
+        isEmpty,
+      );
     });
   });
 

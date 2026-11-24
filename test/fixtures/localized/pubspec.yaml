@@ -1,0 +1,7 @@
+name: localized_fixture
+description: Fixture package with gen-l10n output configured by l10n.yaml.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

@@ -14,6 +14,7 @@ export 'src/checks/complexity_check.dart'
 export 'src/checks/duplication_check.dart'
     show defaultDuplicateBlockSize, minDuplicateBlockSize;
 export 'src/config/dallow_config.dart';
+export 'src/config/localization_output.dart';
 export 'src/config/source_scope.dart';
 export 'src/finding.dart';
 export 'src/gate.dart';

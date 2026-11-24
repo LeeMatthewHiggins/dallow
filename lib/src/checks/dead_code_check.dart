@@ -45,53 +45,54 @@ class DeadCodeCheck {
     final surface = _PublicSurface(graph);
     final reachable = _reachableFrom(graph, participants, surface);
 
-    final findings = <Finding>[];
+    return [
+      for (final node in graph.nodes)
+        if (_isDeadTopLevel(node, reachable)) _topLevelFinding(node),
+      for (final node in graph.memberNodes)
+        if (!participants.contains(node) &&
+            _isDeadMember(node, graph, reachable, surface))
+          _memberFinding(node),
+    ]..sort(compareFindingsByLocation);
+  }
 
-    for (final node in graph.nodes) {
-      if (reachable.contains(node)) continue;
-      final isReportable = node.isPrivate || node.isUnderLibSrc;
-      if (!isReportable) continue;
+  bool _isDeadTopLevel(CodeNode node, Set<CodeNode> reachable) =>
+      !reachable.contains(node) && (node.isPrivate || node.isUnderLibSrc);
 
-      findings.add(
-        Finding(
-          kind: CheckKind.deadCode,
-          severity: Severity.warning,
-          message: "Unused ${_describe(node)} '${node.name}' is never "
-              'referenced from any entrypoint.',
-          file: node.relativePath,
-          line: node.line,
-          symbol: node.name,
-        ),
+  bool _isDeadMember(
+    CodeNode node,
+    CodeGraph graph,
+    Set<CodeNode> reachable,
+    _PublicSurface surface,
+  ) {
+    if (reachable.contains(node) || node.isConsumerFile) return false;
+    // A member of a dead type is covered by the finding for the type.
+    final owner = node.owner;
+    if (owner != null && !reachable.contains(owner)) return false;
+    return _memberReportable(node, surface) &&
+        !_setterIsInUse(node, graph, reachable);
+  }
+
+  Finding _topLevelFinding(CodeNode node) => Finding(
+        kind: CheckKind.deadCode,
+        severity: Severity.warning,
+        message: "Unused ${_describe(node)} '${node.name}' is never "
+            'referenced from any entrypoint.',
+        file: node.relativePath,
+        line: node.line,
+        symbol: node.name,
       );
-    }
 
-    for (final node in graph.memberNodes) {
-      if (reachable.contains(node)) continue;
-      if (participants.contains(node)) continue;
-      if (node.isConsumerFile) continue;
-      // If the enclosing type is itself dead it is already reported; listing
-      // its members too would be redundant noise.
-      final owner = node.owner;
-      if (owner != null && !reachable.contains(owner)) continue;
-      if (!_memberReportable(node, surface)) continue;
-      if (_setterIsInUse(node, graph, reachable)) continue;
-
-      final qualified = '${node.enclosingName}.${node.name}';
-      findings.add(
-        Finding(
-          kind: CheckKind.deadCode,
-          severity: Severity.warning,
-          message: "Unused ${_describeMember(node)} '$qualified' is never "
-              'referenced from any entrypoint.',
-          file: node.relativePath,
-          line: node.line,
-          symbol: qualified,
-        ),
-      );
-    }
-
-    findings.sort(_byLocation);
-    return findings;
+  Finding _memberFinding(CodeNode node) {
+    final qualified = '${node.enclosingName}.${node.name}';
+    return Finding(
+      kind: CheckKind.deadCode,
+      severity: Severity.warning,
+      message: "Unused ${_describeMember(node)} '$qualified' is never "
+          'referenced from any entrypoint.',
+      file: node.relativePath,
+      line: node.line,
+      symbol: qualified,
+    );
   }
 
   Set<CodeNode> _reachableFrom(
@@ -245,12 +246,6 @@ class DeadCodeCheck {
     if (element is SetterElement) return 'setter';
     if (element is FieldElement) return 'field';
     return 'method';
-  }
-
-  int _byLocation(Finding a, Finding b) {
-    final byFile = (a.file ?? '').compareTo(b.file ?? '');
-    if (byFile != 0) return byFile;
-    return (a.line ?? 0).compareTo(b.line ?? 0);
   }
 }
 

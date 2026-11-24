@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dallow/src/config/dallow_config.dart';
+import 'package:dallow/src/config/localization_output.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:glob/glob.dart';
 import 'package:path/path.dart' as p;
@@ -50,7 +51,8 @@ abstract final class _Tests {
 ///
 /// A file can be left out for two reasons: it matches an `exclude:` glob, or
 /// it is generated code — recognised by file name ([DallowConfig] patterns plus
-/// the built-in ones) or by a generated-code banner in its leading comment.
+/// the built-in ones), by being `flutter gen-l10n` output, or by a
+/// generated-code banner in its leading comment.
 /// Left-out files still feed the symbol graph, so the code they reference
 /// stays reachable; only findings located *in* them are dropped.
 class SourceScope {
@@ -65,13 +67,15 @@ class SourceScope {
         _generatedByName = _PathMatcher([
           ..._Generated.patterns,
           ...config.generatedPatterns,
-        ]);
+        ]),
+        _localizations = LocalizationOutput.forPackage(root);
 
   final String _root;
   final bool _reportGenerated;
   final _PathMatcher _excluded;
   final _PathMatcher _duplicationExcluded;
   final _PathMatcher _generatedByName;
+  final LocalizationOutput _localizations;
   final Map<String, bool> _generatedCache = {};
 
   /// Whether the file at [relativePath] (relative to the package root) is
@@ -80,6 +84,7 @@ class SourceScope {
         relativePath,
         () =>
             _generatedByName.matches(relativePath) ||
+            _localizations.contains(_posix(relativePath)) ||
             _hasGeneratedHeader(relativePath),
       );
 
@@ -101,6 +106,9 @@ class SourceScope {
     if (file == null || !file.endsWith('.dart')) return true;
     return reports(file);
   }
+
+  String _posix(String relativePath) =>
+      p.split(p.normalize(relativePath)).join(p.posix.separator);
 
   bool _hasGeneratedHeader(String relativePath) {
     final file = File(p.join(_root, relativePath));

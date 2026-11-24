@@ -1,7 +1,5 @@
 import 'dart:io';
 
-import 'package:analyzer/dart/analysis/features.dart';
-import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/util/dart_files.dart';
@@ -89,12 +87,7 @@ class DependencyCheck {
   /// a string literal — source text held in a test, say — is not mistaken for
   /// a real import. The alternatives of a conditional import are not counted.
   Iterable<String> _importedPackages(String path) sync* {
-    final unit = parseString(
-      content: File(path).readAsStringSync(),
-      featureSet: FeatureSet.latestLanguageVersion(),
-      path: path,
-      throwIfDiagnostics: false,
-    ).unit;
+    final unit = parseDartFile(path).unit;
     for (final directive in unit.directives.whereType<NamespaceDirective>()) {
       final uri = directive.uri.stringValue;
       final match = uri == null ? null : _packageUri.firstMatch(uri);

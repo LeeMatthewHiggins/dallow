@@ -97,3 +97,10 @@ class Finding {
         if (symbol != null) 'symbol': symbol,
       };
 }
+
+/// Orders findings by file, then by line, for stable report output.
+int compareFindingsByLocation(Finding a, Finding b) {
+  final byFile = (a.file ?? '').compareTo(b.file ?? '');
+  if (byFile != 0) return byFile;
+  return (a.line ?? 0).compareTo(b.line ?? 0);
+}

@@ -12,6 +12,10 @@
   longer dilute it: 4 points per percent of functions over the complexity
   limit, and 1 point per weighted finding per hundred functions. Scores are
   lower than in 0.3.0 for the same code.
+- Library: `analyze` and `analyzeWorkspace` run every check by default,
+  including complexity, as the `dallow analyze` command does. `SarifReporter`
+  no longer implements `Reporter`; `Reporter(ReportFormat.sarif)` is
+  unchanged.
 - A package whose own source cannot be resolved is refused with exit `78`.
   `--allow-unresolved` analyses it anyway and reports each gap as an
   `unresolved-source` warning (#23).
@@ -26,7 +30,8 @@
 - Generated code (`*.g.dart`, `*.freezed.dart`, `*.gr.dart`, `*.mocks.dart`,
   `*.gen.dart`, protobuf outputs, and files with a generated-code banner) is
   left out of the findings and the health score while still feeding the symbol
-  graph. `--include-generated` reports it.
+  graph. `flutter gen-l10n` output is recognised from `l10n.yaml` or the
+  tool's defaults. `--include-generated` reports it.
 - The health message carries a letter grade (A–F) and the number of functions
   over the complexity limit.
 - `dallow --version` prints the dallow and `analyzer` versions.

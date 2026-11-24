@@ -369,28 +369,41 @@ class CodeGraph {
     ResolvedUnitResult result,
     AnalysisSession session,
   ) async {
-    for (final directive in result.unit.directives) {
-      if (directive is! NamespaceDirective) continue;
-      if (directive.configurations.isEmpty) continue;
-
-      final defaultLibrary = switch (directive) {
-        ImportDirective() => directive.libraryImport?.importedLibrary,
-        ExportDirective() => directive.libraryExport?.exportedLibrary,
-      };
+    final conditional = result.unit.directives
+        .whereType<NamespaceDirective>()
+        .where((directive) => directive.configurations.isNotEmpty);
+    for (final directive in conditional) {
+      final defaultLibrary = _defaultLibraryOf(directive);
       if (defaultLibrary == null) continue;
-      final defaults = defaultLibrary.exportNamespace.definedNames2;
 
       for (final configuration in directive.configurations) {
         final alternate = await _libraryFor(configuration, result, session);
-        if (alternate == null) continue;
-        for (final entry in alternate.exportNamespace.definedNames2.entries) {
-          final alternateNode = ownerOf(entry.value);
-          final defaultNode = ownerOf(defaults[entry.key]);
-          if (alternateNode == null || defaultNode == null) continue;
-          defaultNode.references.add(alternateNode);
-          _linkAlternateMembers(defaults[entry.key], entry.value);
-        }
+        if (alternate != null) _linkAlternateLibrary(defaultLibrary, alternate);
       }
+    }
+  }
+
+  /// The library a conditional directive resolves to for analysis.
+  LibraryElement? _defaultLibraryOf(NamespaceDirective directive) =>
+      switch (directive) {
+        ImportDirective() => directive.libraryImport?.importedLibrary,
+        ExportDirective() => directive.libraryExport?.exportedLibrary,
+      };
+
+  /// Links each top-level name [alternate] exports to the same name in
+  /// [defaultLibrary], and their members likewise.
+  void _linkAlternateLibrary(
+    LibraryElement defaultLibrary,
+    LibraryElement alternate,
+  ) {
+    final defaults = defaultLibrary.exportNamespace.definedNames2;
+    for (final entry in alternate.exportNamespace.definedNames2.entries) {
+      final defaultElement = defaults[entry.key];
+      final alternateNode = ownerOf(entry.value);
+      final defaultNode = ownerOf(defaultElement);
+      if (alternateNode == null || defaultNode == null) continue;
+      defaultNode.references.add(alternateNode);
+      _linkAlternateMembers(defaultElement, entry.value);
     }
   }
 
@@ -408,20 +421,24 @@ class CodeGraph {
       ...alternateType.setters,
     ];
     for (final member in members) {
-      final name = member.name;
-      if (name == null) continue;
-      final counterpart = switch (member) {
-        MethodElement() => defaultType.getMethod(name),
-        FieldElement() => defaultType.getField(name),
-        GetterElement() => defaultType.getGetter(name),
-        SetterElement() => defaultType.getSetter(name),
-        _ => null,
-      };
-      final defaultNode = memberNodeOf(counterpart);
+      final defaultNode = memberNodeOf(_counterpartIn(defaultType, member));
       final alternateNode = memberNodeOf(member);
       if (defaultNode == null || alternateNode == null) continue;
       defaultNode.references.add(alternateNode);
     }
+  }
+
+  /// The member of [type] with the same name and kind as [member].
+  Element? _counterpartIn(InstanceElement type, Element member) {
+    final name = member.name;
+    if (name == null) return null;
+    return switch (member) {
+      MethodElement() => type.getMethod(name),
+      FieldElement() => type.getField(name),
+      GetterElement() => type.getGetter(name),
+      SetterElement() => type.getSetter(name),
+      _ => null,
+    };
   }
 
   Future<LibraryElement?> _libraryFor(
@@ -457,6 +474,17 @@ class CodeGraph {
     }
   }
 
+  /// The name of [element] when it is a real declaration written in the file
+  /// behind [result]; null for an unnamed or synthetic element, or one
+  /// declared in another file of the same library.
+  String? _declaredNameIn(ResolvedUnitResult result, Element element) {
+    final name = element.name;
+    if (name == null || name.isEmpty) return null;
+    if (_isSyntheticProperty(element)) return null;
+    final source = element.firstFragment.libraryFragment?.source.fullName;
+    return result.path == source ? name : null;
+  }
+
   void _registerDeclarations(ResolvedUnitResult result) {
     final relativePath = p.relative(result.path, from: rootPath);
     final isUnderLib = _isUnder(relativePath, 'lib');
@@ -464,11 +492,9 @@ class CodeGraph {
     final isConsumerFile = !isUnderLib;
 
     for (final element in _topLevelElements(result.libraryElement)) {
+      final name = _declaredNameIn(result, element);
+      if (name == null) continue;
       final fragment = element.firstFragment;
-      final name = element.name;
-      if (name == null || name.isEmpty) continue;
-      if (_isSyntheticProperty(element)) continue;
-      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       final isPrivate = name.startsWith('_');
       final node = CodeNode(
@@ -529,11 +555,9 @@ class CodeGraph {
     ];
 
     for (final element in members) {
+      final name = _declaredNameIn(result, element);
+      if (name == null) continue;
       final fragment = element.firstFragment;
-      final name = element.name;
-      if (name == null || name.isEmpty) continue;
-      if (_isSyntheticProperty(element)) continue;
-      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       _memberNodes[element] = CodeNode(
         element: element,
@@ -719,12 +743,21 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   @override
   void visitFieldDeclaration(FieldDeclaration node) {
-    final variables = node.fields.variables;
+    _visitVariables(node.metadata, node.fields);
+  }
+
+  /// Attributes the annotations and declared type of a variable list to its
+  /// first variable, and each initialiser to the variable it initialises.
+  void _visitVariables(
+    NodeList<Annotation> metadata,
+    VariableDeclarationList list,
+  ) {
+    final variables = list.variables;
     final first =
         variables.isEmpty ? null : variables.first.declaredFragment?.element;
     _withOwner(first, () {
-      node.metadata.accept(this);
-      node.fields.type?.accept(this);
+      metadata.accept(this);
+      list.type?.accept(this);
     });
     for (final variable in variables) {
       _withOwner(
@@ -755,17 +788,7 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
-    final variables = node.variables.variables;
-    final first =
-        variables.isEmpty ? null : variables.first.declaredFragment?.element;
-    _withOwner(first, () {
-      node.metadata.accept(this);
-      node.variables.type?.accept(this);
-    });
-    for (final variable in variables) {
-      _withOwner(
-          variable.declaredFragment?.element, () => variable.accept(this));
-    }
+    _visitVariables(node.metadata, node.variables);
   }
 
   @override
