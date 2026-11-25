@@ -17,11 +17,19 @@ abstract class Reporter {
       case ReportFormat.markdown:
         return const _MarkdownReporter();
       case ReportFormat.sarif:
-        return const SarifReporter();
+        return const _SarifReporter();
     }
   }
 
   String render(List<Finding> findings);
+}
+
+class _SarifReporter implements Reporter {
+  const _SarifReporter();
+
+  @override
+  String render(List<Finding> findings) =>
+      const SarifReporter().render(findings);
 }
 
 class _ConsoleReporter implements Reporter {

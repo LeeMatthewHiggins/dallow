@@ -3,6 +3,9 @@ import 'package:dallow/src/checks/complexity_check.dart' show ComplexityResult;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+/// A block size small enough for the compact duplication fixtures to match.
+const smallBlockSize = 20;
+
 void main() {
   final fixture = p.absolute('test', 'fixtures', 'sample');
 
@@ -168,6 +171,176 @@ void main() {
     });
   });
 
+  group('generic member dead-code', () {
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'generics'),
+        checks: {Check.deadCode},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag a member used through an instantiated type', () {
+      expect(symbols, isNot(contains('Box.unwrap')));
+      expect(symbols, isNot(contains('_FirstOrFallback.firstOrFallback')));
+    });
+
+    test('still flags an unused member of a generic type or extension', () {
+      expect(symbols, contains('Box.neverUnwrapped'));
+      expect(symbols, contains('_FirstOrFallback.lastOrFallback'));
+    });
+
+    test('accepts a root relative to the current directory', () async {
+      final findings = await analyze(
+        p.join('test', 'fixtures', 'generics'),
+        checks: {Check.deadCode},
+      );
+      expect(findings.map((f) => f.symbol), contains('Box.neverUnwrapped'));
+    });
+  });
+
+  group('assignment-only member dead-code', () {
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'assignments'),
+        checks: {Check.deadCode},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag a field read only through a compound assignment', () {
+      expect(symbols, isNot(contains('Counter._postIncremented')));
+      expect(symbols, isNot(contains('Counter._preIncremented')));
+      expect(symbols, isNot(contains('Counter._lazilyAssigned')));
+      expect(symbols, isNot(contains('Counter._accumulated')));
+      expect(symbols, isNot(contains('Counter._staticCounter')));
+    });
+
+    test('does not flag a declared setter invoked by assignment', () {
+      expect(symbols, isNot(contains('Counter._viaSetter')));
+    });
+
+    test('still flags a field that is assigned but never read', () {
+      expect(symbols, contains('Counter._writeOnly'));
+    });
+
+    test('still flags a declared setter nobody assigns', () {
+      expect(symbols, contains('Counter._unusedSetter'));
+    });
+  });
+
+  group('public surface and unnamed extensions', () {
+    late List<Finding> findings;
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      findings = await analyze(
+        p.absolute('test', 'fixtures', 'surface'),
+        checks: {Check.deadCode, Check.dependencies},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag a public member inherited by an exported type', () {
+      expect(symbols, isNot(contains('Base.inheritedGetter')));
+    });
+
+    test('still flags a private member of that base type', () {
+      expect(symbols, contains('Base._privateUnused'));
+    });
+
+    test('still flags a public member of a type nothing exported extends', () {
+      expect(symbols, contains('Internal.unusedPublic'));
+    });
+
+    test('keeps symbols referenced only from an unnamed extension', () {
+      expect(symbols, isNot(contains('helperForUnnamed')));
+      expect(symbols, isNot(contains('NamedFlags.isOff')));
+      expect(symbols, isNot(contains('NamedFlags.isOn')));
+    });
+
+    test('still flags an extension member nothing references', () {
+      expect(symbols, contains('NamedFlags.isNeverRead'));
+    });
+
+    test('keeps an extension member of a conditional import alternate', () {
+      expect(symbols, isNot(contains('PlatformLabel.label')));
+      expect(symbols, isNot(contains('_format')));
+    });
+
+    test('still flags an alternate extension member nothing calls', () {
+      expect(symbols, contains('PlatformLabel.neverCalled'));
+    });
+
+    test('does not count an import inside a string literal', () {
+      expect(
+        findings.where((f) => f.kind == CheckKind.missingDependency),
+        isEmpty,
+      );
+    });
+  });
+
+  group('members used without being named', () {
+    late Set<String?> symbols;
+
+    setUpAll(() async {
+      final findings = await analyze(
+        p.absolute('test', 'fixtures', 'operators'),
+        checks: {Check.deadCode},
+      );
+      symbols = findings.map((f) => f.symbol).toSet();
+    });
+
+    test('does not flag an operator that an expression invokes', () {
+      expect(symbols, isNot(contains('Vector.+')));
+      expect(symbols, isNot(contains('Vector.[]')));
+      expect(symbols, isNot(contains('Vector.unary-')));
+      expect(symbols, isNot(contains('Vector.-')));
+    });
+
+    test('does not flag an operator used through an assignment', () {
+      expect(symbols, isNot(contains('Vector.^')));
+      expect(symbols, isNot(contains('Grid.[]=')));
+    });
+
+    test('does not flag a call() method invoked on an instance', () {
+      expect(symbols, isNot(contains('Vector.call')));
+    });
+
+    test('does not flag a getter read through an object pattern', () {
+      expect(symbols, isNot(contains('Vector.magnitude')));
+    });
+
+    test('still flags an operator nothing invokes', () {
+      expect(symbols, contains('Vector.*'));
+    });
+
+    test('does not flag a constant used only as a field annotation', () {
+      expect(symbols, isNot(contains('_marker')));
+    });
+
+    test('does not flag a getter whose setter is in use', () {
+      expect(symbols, isNot(contains('Box.value')));
+    });
+
+    test('still flags an unread getter with no setter in use', () {
+      expect(symbols, contains('Box.neverRead'));
+    });
+
+    test('still flags an unused setter beside a getter that is read', () {
+      expect(symbols.where((s) => s == 'Box._lonely'), hasLength(1));
+    });
+
+    test('does not flag the fields of a native struct', () {
+      expect(symbols, isNot(contains('Layout.width')));
+      expect(symbols, isNot(contains('Layout.height')));
+    });
+  });
+
   group('dependency check', () {
     late List<Finding> findings;
 
@@ -248,6 +421,7 @@ void main() {
       final findings = await analyze(
         duplicationFixture,
         checks: {Check.duplication},
+        minBlockSize: smallBlockSize,
       );
 
       expect(findings, hasLength(1));
@@ -260,10 +434,38 @@ void main() {
       expect(finding.message, contains('lib/duplicated.dart:10'));
     });
 
+    test('ignores blocks under the default minimum of 50 tokens', () async {
+      final findings = await analyze(
+        duplicationFixture,
+        checks: {Check.duplication},
+      );
+
+      expect(defaultDuplicateBlockSize, 50);
+      expect(findings, isEmpty);
+    });
+
+    test('leaves test code out unless asked to include it', () async {
+      final byDefault = await analyze(
+        duplicationFixture,
+        checks: {Check.duplication},
+        minBlockSize: smallBlockSize,
+      );
+      final withTests = await analyze(
+        duplicationFixture,
+        checks: {Check.duplication},
+        minBlockSize: smallBlockSize,
+        duplicationIncludesTests: true,
+      );
+
+      expect(byDefault.map((f) => f.file), isNot(contains('test/copies.dart')));
+      expect(withTests.map((f) => f.file), contains('test/copies.dart'));
+    });
+
     test('does not report shared import headers as duplication', () async {
       final findings = await analyze(
         duplicationFixture,
         checks: {Check.duplication},
+        minBlockSize: smallBlockSize,
       );
 
       final inHeaders = findings.where(
@@ -378,8 +580,12 @@ void main() {
         (f) => f.kind == CheckKind.projectHealth,
       );
       expect(health.severity, Severity.info);
-      expect(health.message, contains('Project health score: 97/100'));
-      expect(health.message, contains('2 function(s) analysed'));
+      // One of two declared functions is over the limit: 50% at 4 points per
+      // percent hits the complexity cap of 60.
+      expect(health.message, contains('Project health score: 40/100'));
+      expect(health.message, contains('grade F'));
+      expect(health.message, contains('2 function(s) analysed, 1 over'));
+      expect(health.message, contains('complexity penalty 60'));
     });
 
     test('includes non-complexity findings in combined analysis health score',
@@ -400,10 +606,12 @@ void main() {
       final health = findings.singleWhere(
         (f) => f.kind == CheckKind.projectHealth,
       );
-      expect(health.message, contains('Project health score: 97/100'));
+      // 18 weighted findings across 35 declared functions is 51 per hundred,
+      // which hits the findings cap of 40.
+      expect(health.message, contains('Project health score: 60/100'));
       expect(health.message, contains('35 function(s) analysed'));
       expect(health.message, contains('complexity penalty 0'));
-      expect(health.message, contains('findings penalty 3'));
+      expect(health.message, contains('findings penalty 40 from 18.0'));
     });
   });
 
@@ -543,11 +751,77 @@ void main() {
   });
 
   group('health score weighting', () {
-    ComplexityResult empty() => const ComplexityResult(
-          maxComplexity: defaultMaxComplexity,
-          functions: <FunctionComplexity>[],
-          findings: <Finding>[],
+    FunctionComplexity function({bool isClosure = false}) => FunctionComplexity(
+          symbol: 'f',
+          relativePath: 'lib/f.dart',
+          line: 1,
+          complexity: 1,
+          isClosure: isClosure,
         );
+
+    Finding overLimit(Severity severity) => Finding(
+          kind: CheckKind.highComplexity,
+          severity: severity,
+          message: 'over',
+        );
+
+    /// A result over a hundred declared functions, so one weighted finding
+    /// costs exactly one point and one function over the limit costs four.
+    ComplexityResult hundredFunctions({
+      List<Finding> findings = const [],
+      int closures = 0,
+    }) =>
+        ComplexityResult(
+          maxComplexity: defaultMaxComplexity,
+          functions: [
+            for (var i = 0; i < 100; i++) function(),
+            for (var i = 0; i < closures; i++) function(isClosure: true),
+          ],
+          findings: findings,
+        );
+
+    ComplexityResult empty() => hundredFunctions();
+
+    test('each percent of functions over the limit costs four points', () {
+      final result = hundredFunctions(
+        findings: [overLimit(Severity.warning)],
+      );
+
+      expect(result.healthScore(otherFindings: []), 96);
+    });
+
+    test('a function at twice the limit counts double', () {
+      final result = hundredFunctions(findings: [overLimit(Severity.error)]);
+
+      expect(result.healthScore(otherFindings: []), 92);
+    });
+
+    test('closures do not dilute the score', () {
+      final result = hundredFunctions(
+        findings: [overLimit(Severity.warning)],
+        closures: 900,
+      );
+
+      expect(result.declaredFunctionCount, 100);
+      expect(result.healthScore(otherFindings: []), 96);
+    });
+
+    test('the complexity penalty is capped at 60', () {
+      final result = hundredFunctions(
+        findings: [for (var i = 0; i < 50; i++) overLimit(Severity.error)],
+      );
+
+      expect(result.healthScore(otherFindings: []), 40);
+    });
+
+    test('grades run from A at 90 down to F below 60', () {
+      expect(ComplexityResult.gradeFor(100), 'A');
+      expect(ComplexityResult.gradeFor(90), 'A');
+      expect(ComplexityResult.gradeFor(89), 'B');
+      expect(ComplexityResult.gradeFor(70), 'C');
+      expect(ComplexityResult.gradeFor(60), 'D');
+      expect(ComplexityResult.gradeFor(59), 'F');
+    });
 
     test('a large duplicate block costs more than a small one', () {
       const small = Finding(
@@ -562,7 +836,7 @@ void main() {
         weight: 40,
       );
 
-      expect(empty().healthScore(otherFindings: [small]), 95);
+      expect(empty().healthScore(otherFindings: [small]), 99);
       expect(empty().healthScore(otherFindings: [large]), 60);
     });
 
@@ -570,6 +844,7 @@ void main() {
       final findings = await analyze(
         p.absolute('test', 'fixtures', 'duplication'),
         checks: {Check.duplication},
+        minBlockSize: smallBlockSize,
       );
 
       final duplicate = findings.single;

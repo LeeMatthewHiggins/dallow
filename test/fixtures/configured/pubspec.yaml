@@ -1,0 +1,10 @@
+name: configured_fixture
+description: Fixture package carrying its own dallow.yaml.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  meta: ^1.0.0

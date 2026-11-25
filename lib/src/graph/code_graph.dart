@@ -162,12 +162,17 @@ class FunctionComplexity {
     required this.relativePath,
     required this.line,
     required this.complexity,
+    this.isClosure = false,
   });
 
   final String symbol;
   final String relativePath;
   final int line;
   final int complexity;
+
+  /// Whether this is an anonymous function rather than a declared function,
+  /// method or constructor.
+  final bool isClosure;
 }
 
 /// The resolved symbol graph for a single package, plus the file-level import
@@ -189,6 +194,13 @@ class CodeGraph {
   final Set<CodeNode> _exportedApi = {};
   final List<FunctionComplexity> _functions = [];
   final List<ResolutionProblem> _resolutionProblems = [];
+  final Set<CodeNode> _unownedReferences = {};
+
+  /// Symbols referenced from code that no node owns — chiefly the members of
+  /// an unnamed extension, which cannot be named and so cannot be traced to a
+  /// caller. Such code is usable anywhere in its library, so everything it
+  /// references is a reachability root.
+  Set<CodeNode> get unownedReferences => _unownedReferences;
 
   /// Files and directives the analyzer could not resolve while building this
   /// graph. Non-empty means reachability results are untrustworthy.
@@ -357,28 +369,41 @@ class CodeGraph {
     ResolvedUnitResult result,
     AnalysisSession session,
   ) async {
-    for (final directive in result.unit.directives) {
-      if (directive is! NamespaceDirective) continue;
-      if (directive.configurations.isEmpty) continue;
-
-      final defaultLibrary = switch (directive) {
-        ImportDirective() => directive.libraryImport?.importedLibrary,
-        ExportDirective() => directive.libraryExport?.exportedLibrary,
-      };
+    final conditional = result.unit.directives
+        .whereType<NamespaceDirective>()
+        .where((directive) => directive.configurations.isNotEmpty);
+    for (final directive in conditional) {
+      final defaultLibrary = _defaultLibraryOf(directive);
       if (defaultLibrary == null) continue;
-      final defaults = defaultLibrary.exportNamespace.definedNames2;
 
       for (final configuration in directive.configurations) {
         final alternate = await _libraryFor(configuration, result, session);
-        if (alternate == null) continue;
-        for (final entry in alternate.exportNamespace.definedNames2.entries) {
-          final alternateNode = ownerOf(entry.value);
-          final defaultNode = ownerOf(defaults[entry.key]);
-          if (alternateNode == null || defaultNode == null) continue;
-          defaultNode.references.add(alternateNode);
-          _linkAlternateMembers(defaults[entry.key], entry.value);
-        }
+        if (alternate != null) _linkAlternateLibrary(defaultLibrary, alternate);
       }
+    }
+  }
+
+  /// The library a conditional directive resolves to for analysis.
+  LibraryElement? _defaultLibraryOf(NamespaceDirective directive) =>
+      switch (directive) {
+        ImportDirective() => directive.libraryImport?.importedLibrary,
+        ExportDirective() => directive.libraryExport?.exportedLibrary,
+      };
+
+  /// Links each top-level name [alternate] exports to the same name in
+  /// [defaultLibrary], and their members likewise.
+  void _linkAlternateLibrary(
+    LibraryElement defaultLibrary,
+    LibraryElement alternate,
+  ) {
+    final defaults = defaultLibrary.exportNamespace.definedNames2;
+    for (final entry in alternate.exportNamespace.definedNames2.entries) {
+      final defaultElement = defaults[entry.key];
+      final alternateNode = ownerOf(entry.value);
+      final defaultNode = ownerOf(defaultElement);
+      if (alternateNode == null || defaultNode == null) continue;
+      defaultNode.references.add(alternateNode);
+      _linkAlternateMembers(defaultElement, entry.value);
     }
   }
 
@@ -386,8 +411,7 @@ class CodeGraph {
   /// default type, so a platform implementation's methods and fields are
   /// reachable exactly when the default's are.
   void _linkAlternateMembers(Element? defaultType, Element alternateType) {
-    if (defaultType is! InterfaceElement ||
-        alternateType is! InterfaceElement) {
+    if (defaultType is! InstanceElement || alternateType is! InstanceElement) {
       return;
     }
     final members = <Element>[
@@ -397,20 +421,24 @@ class CodeGraph {
       ...alternateType.setters,
     ];
     for (final member in members) {
-      final name = member.name;
-      if (name == null) continue;
-      final counterpart = switch (member) {
-        MethodElement() => defaultType.getMethod(name),
-        FieldElement() => defaultType.getField(name),
-        GetterElement() => defaultType.getGetter(name),
-        SetterElement() => defaultType.getSetter(name),
-        _ => null,
-      };
-      final defaultNode = memberNodeOf(counterpart);
+      final defaultNode = memberNodeOf(_counterpartIn(defaultType, member));
       final alternateNode = memberNodeOf(member);
       if (defaultNode == null || alternateNode == null) continue;
       defaultNode.references.add(alternateNode);
     }
+  }
+
+  /// The member of [type] with the same name and kind as [member].
+  Element? _counterpartIn(InstanceElement type, Element member) {
+    final name = member.name;
+    if (name == null) return null;
+    return switch (member) {
+      MethodElement() => type.getMethod(name),
+      FieldElement() => type.getField(name),
+      GetterElement() => type.getGetter(name),
+      SetterElement() => type.getSetter(name),
+      _ => null,
+    };
   }
 
   Future<LibraryElement?> _libraryFor(
@@ -446,6 +474,17 @@ class CodeGraph {
     }
   }
 
+  /// The name of [element] when it is a real declaration written in the file
+  /// behind [result]; null for an unnamed or synthetic element, or one
+  /// declared in another file of the same library.
+  String? _declaredNameIn(ResolvedUnitResult result, Element element) {
+    final name = element.name;
+    if (name == null || name.isEmpty) return null;
+    if (_isSyntheticProperty(element)) return null;
+    final source = element.firstFragment.libraryFragment?.source.fullName;
+    return result.path == source ? name : null;
+  }
+
   void _registerDeclarations(ResolvedUnitResult result) {
     final relativePath = p.relative(result.path, from: rootPath);
     final isUnderLib = _isUnder(relativePath, 'lib');
@@ -453,11 +492,9 @@ class CodeGraph {
     final isConsumerFile = !isUnderLib;
 
     for (final element in _topLevelElements(result.libraryElement)) {
+      final name = _declaredNameIn(result, element);
+      if (name == null) continue;
       final fragment = element.firstFragment;
-      final name = element.name;
-      if (name == null || name.isEmpty) continue;
-      if (_isSyntheticProperty(element)) continue;
-      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       final isPrivate = name.startsWith('_');
       final node = CodeNode(
@@ -518,11 +555,9 @@ class CodeGraph {
     ];
 
     for (final element in members) {
+      final name = _declaredNameIn(result, element);
+      if (name == null) continue;
       final fragment = element.firstFragment;
-      final name = element.name;
-      if (name == null || name.isEmpty) continue;
-      if (_isSyntheticProperty(element)) continue;
-      if (result.path != fragment.libraryFragment?.source.fullName) continue;
 
       _memberNodes[element] = CodeNode(
         element: element,
@@ -708,10 +743,22 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   @override
   void visitFieldDeclaration(FieldDeclaration node) {
-    final variables = node.fields.variables;
+    _visitVariables(node.metadata, node.fields);
+  }
+
+  /// Attributes the annotations and declared type of a variable list to its
+  /// first variable, and each initialiser to the variable it initialises.
+  void _visitVariables(
+    NodeList<Annotation> metadata,
+    VariableDeclarationList list,
+  ) {
+    final variables = list.variables;
     final first =
         variables.isEmpty ? null : variables.first.declaredFragment?.element;
-    _withOwner(first, () => node.fields.type?.accept(this));
+    _withOwner(first, () {
+      metadata.accept(this);
+      list.type?.accept(this);
+    });
     for (final variable in variables) {
       _withOwner(
           variable.declaredFragment?.element, () => variable.accept(this));
@@ -741,14 +788,7 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
 
   @override
   void visitTopLevelVariableDeclaration(TopLevelVariableDeclaration node) {
-    final variables = node.variables.variables;
-    final first =
-        variables.isEmpty ? null : variables.first.declaredFragment?.element;
-    _withOwner(first, () => node.variables.type?.accept(this));
-    for (final variable in variables) {
-      _withOwner(
-          variable.declaredFragment?.element, () => variable.accept(this));
-    }
+    _visitVariables(node.metadata, node.variables);
   }
 
   @override
@@ -763,35 +803,82 @@ class _ReferenceVisitor extends RecursiveAstVisitor<void> {
     super.visitNamedType(node);
   }
 
-  // The target of `x += 1`, `x ??= v`, `++x` or `x--` is read as well as
-  // written, but its identifier carries no element: the analyzer records
-  // the read on the expression instead. A plain `x = v` reads nothing, so a
-  // field that is only ever assigned stays unreachable.
   @override
   void visitAssignmentExpression(AssignmentExpression node) {
-    _record(node.readElement);
+    _recordAssignment(node);
+    _record(node.element);
     super.visitAssignmentExpression(node);
   }
 
   @override
   void visitPrefixExpression(PrefixExpression node) {
-    _record(node.readElement);
+    _recordAssignment(node);
+    _record(node.element);
     super.visitPrefixExpression(node);
   }
 
   @override
   void visitPostfixExpression(PostfixExpression node) {
-    _record(node.readElement);
+    _recordAssignment(node);
+    _record(node.element);
     super.visitPostfixExpression(node);
+  }
+
+  // An operator, a `call()` and a pattern's getter are invoked without their
+  // name appearing as an identifier: the analyzer resolves each onto the
+  // expression that uses it.
+
+  @override
+  void visitBinaryExpression(BinaryExpression node) {
+    _record(node.element);
+    super.visitBinaryExpression(node);
+  }
+
+  @override
+  void visitIndexExpression(IndexExpression node) {
+    _record(node.element);
+    super.visitIndexExpression(node);
+  }
+
+  @override
+  void visitFunctionExpressionInvocation(FunctionExpressionInvocation node) {
+    _record(node.element);
+    super.visitFunctionExpressionInvocation(node);
+  }
+
+  @override
+  void visitPatternField(PatternField node) {
+    _record(node.element);
+    super.visitPatternField(node);
+  }
+
+  /// The target of an assignment carries no element of its own: the analyzer
+  /// resolves it onto the enclosing expression instead. A compound form
+  /// (`x++`, `x += 1`, `x ??= y`) reads the target, which is a use. A write
+  /// is a use only when it runs declared code — a setter or an `[]=`
+  /// operator — so a field that is merely assigned and never read stays
+  /// unused.
+  void _recordAssignment(CompoundAssignmentExpression node) {
+    _record(node.readElement);
+    final written = node.writeElement;
+    final runsDeclaredCode = written is MethodElement ||
+        (written is SetterElement && !CodeGraph._isSyntheticProperty(written));
+    if (runsDeclaredCode) _record(written);
   }
 
   void _record(Element? referenced) {
     if (referenced == null) return;
-    final from = _current;
-    if (from == null) return;
-
     final memberTarget = _graph.memberNodeOf(referenced);
     final topLevelTarget = _graph.ownerOf(referenced);
+
+    final from = _current;
+    if (from == null) {
+      if (memberTarget != null) _graph._unownedReferences.add(memberTarget);
+      if (topLevelTarget != null) {
+        _graph._unownedReferences.add(topLevelTarget);
+      }
+      return;
+    }
 
     // The enclosing scope reaches both the referenced member (if the reference
     // resolves to one) and its top-level owner, so member-level and top-level
@@ -850,18 +937,22 @@ class _ComplexityCollector extends RecursiveAstVisitor<void> {
   void visitFunctionExpression(FunctionExpression node) {
     if (node.parent is FunctionDeclaration) return;
     final line = _result.lineInfo.getLocation(node.offset).lineNumber;
-    _record('${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
-        node.body);
+    _record(
+      '${_enclosingCallableName(node) ?? '<closure>'}.<closure>:$line',
+      node.body,
+      isClosure: true,
+    );
     node.body.accept(this);
   }
 
-  void _record(String symbol, FunctionBody body) {
+  void _record(String symbol, FunctionBody body, {bool isClosure = false}) {
     _graph._functions.add(
       FunctionComplexity(
         symbol: symbol,
         relativePath: p.relative(_result.path, from: _graph.rootPath),
         line: _result.lineInfo.getLocation(body.parent!.offset).lineNumber,
         complexity: _ComplexityCounter.count(body),
+        isClosure: isClosure,
       ),
     );
   }

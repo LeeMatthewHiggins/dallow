@@ -1,0 +1,7 @@
+name: surface_fixture
+description: Fixture package exercising inherited public members and unnamed extensions.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

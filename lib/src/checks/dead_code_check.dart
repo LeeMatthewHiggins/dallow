@@ -25,6 +25,16 @@ import 'package:dallow/src/graph/code_graph.dart';
 /// or declared on a non-public-API (e.g. `lib/src`) type. Public members of
 /// public-API classes are never reported — exactly as for top-level symbols.
 ///
+/// **Declared entrypoints** — any symbol annotated
+/// `@pragma('vm:entry-point')`, and every member of a type so annotated — are
+/// roots too: the VM or native code calls them without a Dart reference. So
+/// are the fields of a `dart:ffi` `Struct` or `Union`, which describe a native
+/// memory layout whether or not Dart reads each one.
+///
+/// A getter is not reported while the setter of the same property is in use:
+/// the pair is one property, and Dart style asks for a getter wherever there
+/// is a setter.
+///
 /// The check is deliberately conservative: a false "dead member" is worse than
 /// a miss, so anything reachable through inheritance or an annotation is kept.
 class DeadCodeCheck {
@@ -32,65 +42,76 @@ class DeadCodeCheck {
 
   List<Finding> run(CodeGraph graph) {
     final participants = _inheritanceParticipants(graph);
-    final reachable = _reachableFrom(graph, participants);
+    final surface = _PublicSurface(graph);
+    final reachable = _reachableFrom(graph, participants, surface);
 
-    final findings = <Finding>[];
-
-    for (final node in graph.nodes) {
-      if (reachable.contains(node)) continue;
-      final isReportable = node.isPrivate || node.isUnderLibSrc;
-      if (!isReportable) continue;
-
-      findings.add(
-        Finding(
-          kind: CheckKind.deadCode,
-          severity: Severity.warning,
-          message: "Unused ${_describe(node)} '${node.name}' is never "
-              'referenced from any entrypoint.',
-          file: node.relativePath,
-          line: node.line,
-          symbol: node.name,
-        ),
-      );
-    }
-
-    for (final node in graph.memberNodes) {
-      if (reachable.contains(node)) continue;
-      if (participants.contains(node)) continue;
-      if (node.isConsumerFile) continue;
-      // If the enclosing type is itself dead it is already reported; listing
-      // its members too would be redundant noise.
-      final owner = node.owner;
-      if (owner != null && !reachable.contains(owner)) continue;
-      if (!_memberReportable(node, graph)) continue;
-
-      final qualified = '${node.enclosingName}.${node.name}';
-      findings.add(
-        Finding(
-          kind: CheckKind.deadCode,
-          severity: Severity.warning,
-          message: "Unused ${_describeMember(node)} '$qualified' is never "
-              'referenced from any entrypoint.',
-          file: node.relativePath,
-          line: node.line,
-          symbol: qualified,
-        ),
-      );
-    }
-
-    findings.sort(_byLocation);
-    return findings;
+    return [
+      for (final node in graph.nodes)
+        if (_isDeadTopLevel(node, reachable)) _topLevelFinding(node),
+      for (final node in graph.memberNodes)
+        if (!participants.contains(node) &&
+            _isDeadMember(node, graph, reachable, surface))
+          _memberFinding(node),
+    ]..sort(compareFindingsByLocation);
   }
 
-  Set<CodeNode> _reachableFrom(CodeGraph graph, Set<CodeNode> participants) {
+  bool _isDeadTopLevel(CodeNode node, Set<CodeNode> reachable) =>
+      !reachable.contains(node) && (node.isPrivate || node.isUnderLibSrc);
+
+  bool _isDeadMember(
+    CodeNode node,
+    CodeGraph graph,
+    Set<CodeNode> reachable,
+    _PublicSurface surface,
+  ) {
+    if (reachable.contains(node) || node.isConsumerFile) return false;
+    // A member of a dead type is covered by the finding for the type.
+    final owner = node.owner;
+    if (owner != null && !reachable.contains(owner)) return false;
+    return _memberReportable(node, surface) &&
+        !_setterIsInUse(node, graph, reachable);
+  }
+
+  Finding _topLevelFinding(CodeNode node) => Finding(
+        kind: CheckKind.deadCode,
+        severity: Severity.warning,
+        message: "Unused ${_describe(node)} '${node.name}' is never "
+            'referenced from any entrypoint.',
+        file: node.relativePath,
+        line: node.line,
+        symbol: node.name,
+      );
+
+  Finding _memberFinding(CodeNode node) {
+    final qualified = '${node.enclosingName}.${node.name}';
+    return Finding(
+      kind: CheckKind.deadCode,
+      severity: Severity.warning,
+      message: "Unused ${_describeMember(node)} '$qualified' is never "
+          'referenced from any entrypoint.',
+      file: node.relativePath,
+      line: node.line,
+      symbol: qualified,
+    );
+  }
+
+  Set<CodeNode> _reachableFrom(
+    CodeGraph graph,
+    Set<CodeNode> participants,
+    _PublicSurface surface,
+  ) {
     final seeds = <CodeNode>[
-      ...graph.nodes.where((n) => n.isConsumerFile || n.isPublicApi),
+      ...graph.nodes.where(
+        (n) => n.isConsumerFile || n.isPublicApi || _isUsedFromOutsideDart(n),
+      ),
       ...graph.exportedApi,
+      ...graph.unownedReferences,
       ...graph.memberNodes.where(
         (m) =>
             m.isConsumerFile ||
             participants.contains(m) ||
-            (!m.isPrivate && _enclosingIsPublicSurface(m, graph)),
+            _isUsedFromOutsideDart(m) ||
+            (!m.isPrivate && surface.exposesMembersOf(m.owner)),
       ),
     ];
 
@@ -104,18 +125,51 @@ class DeadCodeCheck {
     return reachable;
   }
 
+  /// True when the VM or native code uses [node] without a Dart reference:
+  /// it, or the type that declares it, carries `@pragma('vm:entry-point')`,
+  /// or it is a field of a native `Struct` or `Union`.
+  bool _isUsedFromOutsideDart(CodeNode node) {
+    final owner = node.owner;
+    if (_hasEntryPointPragma(node.element)) return true;
+    if (owner == null) return false;
+    return _hasEntryPointPragma(owner.element) ||
+        _isNativeLayout(owner.element);
+  }
+
+  bool _isNativeLayout(Element type) =>
+      type is InterfaceElement &&
+      type.allSupertypes.any(
+        (supertype) =>
+            supertype.element.library.uri == _ffiLibrary &&
+            _nativeLayoutTypes.contains(supertype.element.name),
+      );
+
+  static final Uri _ffiLibrary = Uri.parse('dart:ffi');
+  static const Set<String> _nativeLayoutTypes = {'Struct', 'Union'};
+
+  /// True when [node] is a getter whose matching setter is reachable.
+  bool _setterIsInUse(
+    CodeNode node,
+    CodeGraph graph,
+    Set<CodeNode> reachable,
+  ) {
+    final element = node.element;
+    if (element is! GetterElement) return false;
+    final setter = graph.memberNodeOf(element.correspondingSetter);
+    return setter != null && reachable.contains(setter);
+  }
+
+  bool _hasEntryPointPragma(Element element) => element.metadata.annotations
+      .any((a) => a.toSource().contains(_entryPointPragma));
+
+  static const _entryPointPragma = 'vm:entry-point';
+
   /// A member is reportable when it is private, or its enclosing type is not
   /// part of the public API surface (e.g. a `lib/src` class). Public members of
   /// public-API classes are never reportable — the same rule as for top-level
   /// public symbols.
-  bool _memberReportable(CodeNode node, CodeGraph graph) =>
-      node.isPrivate || !_enclosingIsPublicSurface(node, graph);
-
-  bool _enclosingIsPublicSurface(CodeNode member, CodeGraph graph) {
-    final owner = member.owner;
-    if (owner == null) return false;
-    return owner.isPublicApi || graph.exportedApi.contains(owner);
-  }
+  bool _memberReportable(CodeNode node, _PublicSurface surface) =>
+      node.isPrivate || !surface.exposesMembersOf(node.owner);
 
   /// Members that take part in an inheritance relationship and so may be
   /// reached through dynamic dispatch: anything carrying an inheritance-signal
@@ -193,10 +247,28 @@ class DeadCodeCheck {
     if (element is FieldElement) return 'field';
     return 'method';
   }
+}
 
-  int _byLocation(Finding a, Finding b) {
-    final byFile = (a.file ?? '').compareTo(b.file ?? '');
-    if (byFile != 0) return byFile;
-    return (a.line ?? 0).compareTo(b.line ?? 0);
+/// The types whose public members external code can call.
+///
+/// That is every type in the public API, plus every supertype of one: a
+/// member declared on an unexported base class is still callable through an
+/// exported subclass (`Request.isEmpty`, declared on an internal `Message`).
+class _PublicSurface {
+  _PublicSurface(CodeGraph graph) {
+    for (final node in graph.nodes) {
+      if (!node.isPublicApi && !graph.exportedApi.contains(node)) continue;
+      _types.add(node.element);
+      final element = node.element;
+      if (element is! InterfaceElement) continue;
+      _types.addAll(element.allSupertypes.map((type) => type.element));
+    }
   }
+
+  final Set<Element> _types = {};
+
+  /// Whether the public members of the type behind [owner] are reachable
+  /// from outside the package.
+  bool exposesMembersOf(CodeNode? owner) =>
+      owner != null && _types.contains(owner.element);
 }

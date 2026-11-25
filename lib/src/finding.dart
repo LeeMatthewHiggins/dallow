@@ -75,6 +75,18 @@ class Finding {
         weight: weight,
       );
 
+  /// Returns a copy of this finding reported at [severity].
+  Finding withSeverity(Severity severity) => Finding(
+        kind: kind,
+        severity: severity,
+        message: message,
+        file: file,
+        line: line,
+        symbol: symbol,
+        package: package,
+        weight: weight,
+      );
+
   Map<String, Object?> toJson() => {
         if (package != null) 'package': package,
         'kind': kind.id,
@@ -84,4 +96,11 @@ class Finding {
         if (line != null) 'line': line,
         if (symbol != null) 'symbol': symbol,
       };
+}
+
+/// Orders findings by file, then by line, for stable report output.
+int compareFindingsByLocation(Finding a, Finding b) {
+  final byFile = (a.file ?? '').compareTo(b.file ?? '');
+  if (byFile != 0) return byFile;
+  return (a.line ?? 0).compareTo(b.line ?? 0);
 }

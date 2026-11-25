@@ -26,7 +26,7 @@ id) or a human uploads the zip via the admin UI (`/workspace-items/add`):
 ```sh
 dw tool create \
   --title "dallow" \
-  --description "Codebase intelligence for Dart/Flutter: dead code, dependency hygiene, circular imports." \
+  --description "Codebase intelligence for Dart/Flutter: dead code, dependency drift, circular imports, duplicated code, complexity." \
   --zip-file build/dallow-tool.zip \
   --context organisation --entity-id <orgId>
 ```

@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/features.dart';
+import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:path/path.dart' as p;
 
 const _skippedDirs = {
@@ -44,3 +47,25 @@ bool isUnderLib(String relativePath) {
   final segments = p.split(p.normalize(relativePath));
   return segments.isNotEmpty && segments.first == 'lib';
 }
+
+/// The Dart files a check scans for [rootPath]: the file itself when
+/// [rootPath] names one, otherwise every file of the package rooted there.
+List<String> dartFilesAt(String rootPath) =>
+    _isDartFile(rootPath) ? [rootPath] : listDartFiles(rootPath);
+
+/// The directory that paths under [rootPath] are reported relative to: the
+/// file's directory when [rootPath] names a file, otherwise [rootPath].
+String sourceRootOf(String rootPath) =>
+    _isDartFile(rootPath) ? p.dirname(rootPath) : rootPath;
+
+bool _isDartFile(String path) =>
+    path.endsWith('.dart') && File(path).existsSync();
+
+/// Parses the Dart file at [path] without resolving it. Syntax errors are
+/// tolerated, so a file that does not compile is still scanned.
+ParseStringResult parseDartFile(String path) => parseString(
+      content: File(path).readAsStringSync(),
+      featureSet: FeatureSet.latestLanguageVersion(),
+      path: path,
+      throwIfDiagnostics: false,
+    );

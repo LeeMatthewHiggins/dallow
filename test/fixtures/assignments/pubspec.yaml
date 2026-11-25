@@ -1,0 +1,7 @@
+name: assignments_fixture
+description: Fixture package exercising members reached only through assignment.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

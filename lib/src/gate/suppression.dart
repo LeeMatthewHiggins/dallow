@@ -1,7 +1,3 @@
-import 'dart:io';
-
-import 'package:analyzer/dart/analysis/features.dart';
-import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:dallow/src/finding.dart';
 import 'package:dallow/src/gate/finding_filter.dart';
@@ -135,9 +131,9 @@ class SuppressionScanner {
   /// Parses every `dallow-ignore` directive under [rootPath]. [rootPath] may be
   /// a directory (the package) or a single `.dart` file.
   Suppressions scan(String rootPath) {
-    final sourceRoot = _sourceRoot(rootPath);
+    final sourceRoot = sourceRootOf(rootPath);
     final directives = <IgnoreDirective>[];
-    for (final path in _dartFiles(rootPath)) {
+    for (final path in dartFilesAt(rootPath)) {
       final relative = p.normalize(p.relative(path, from: sourceRoot));
       directives.addAll(_scanFile(path, relative));
     }
@@ -145,13 +141,7 @@ class SuppressionScanner {
   }
 
   List<IgnoreDirective> _scanFile(String path, String relative) {
-    final content = File(path).readAsStringSync();
-    final parsed = parseString(
-      content: content,
-      featureSet: FeatureSet.latestLanguageVersion(),
-      path: path,
-      throwIfDiagnostics: false,
-    );
+    final parsed = parseDartFile(path);
 
     final directives = <IgnoreDirective>[];
     Token? token = parsed.unit.beginToken;
@@ -223,20 +213,6 @@ class SuppressionScanner {
       if (kind.id == id) return kind;
     }
     return null;
-  }
-
-  List<String> _dartFiles(String rootPath) {
-    final file = File(rootPath);
-    if (file.existsSync() && rootPath.endsWith('.dart')) return [file.path];
-    return listDartFiles(rootPath);
-  }
-
-  String _sourceRoot(String rootPath) {
-    final file = File(rootPath);
-    if (file.existsSync() && rootPath.endsWith('.dart')) {
-      return p.dirname(file.path);
-    }
-    return rootPath;
   }
 }
 

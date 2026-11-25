@@ -2,7 +2,7 @@ import 'dart:isolate';
 
 /// The dallow release version. `test/version_test.dart` keeps it equal to
 /// the `version:` in `pubspec.yaml`.
-const dallowVersion = '0.3.0';
+const dallowVersion = '0.4.0';
 
 /// The `analyzer` version baked in at compile time by `tool/build.sh`
 /// (`-DDALLOW_ANALYZER_VERSION=<x.y.z>`). Empty when not set.

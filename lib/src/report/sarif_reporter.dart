@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:dallow/src/finding.dart';
-import 'package:dallow/src/report/reporter.dart';
 import 'package:path/path.dart' as p;
 
 /// Renders findings as a [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) log
@@ -21,7 +20,7 @@ import 'package:path/path.dart' as p;
 /// `line`) — are emitted as valid results with **no `locations`** (the array
 /// is optional in SARIF); the file they concern remains named in the result's
 /// `message.text`, so nothing is silently dropped.
-class SarifReporter implements Reporter {
+class SarifReporter {
   const SarifReporter();
 
   /// The published JSON Schema for SARIF 2.1.0.
@@ -30,7 +29,6 @@ class SarifReporter implements Reporter {
   /// Where a consumer can learn about the tool that produced the log.
   static const informationUri = 'https://github.com/LeeMatthewHiggins/dallow';
 
-  @override
   String render(List<Finding> findings) {
     final log = <String, Object?>{
       r'$schema': schemaUri,

@@ -1,31 +1,81 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-24
 
-- `dallow --version` prints the dallow version and the resolved `analyzer`
-  version, so a stale binary is visible at a glance. `tool/build.sh` bakes the
-  analyzer version into each compiled binary.
-- Regression test: `analyze` completes on Dart 3.10 dot shorthands in
-  parameter default values and const contexts. A binary built on an analyzer
-  older than 14 crashed there with `Missing implementation of
-  visitDotShorthandInvocation` (exit 255).
-- Dead code: refuse to analyse a package whose own source cannot be resolved —
-  a file the analyzer returns no resolved unit for, or a relative /
-  `package:<this package>/` import it cannot find (normally a missing
-  `pub get`). Such a hole silently dropped every symbol behind it and produced
-  pages of confident false positives; dallow now exits `78` naming the first
-  gaps, or with `--allow-unresolved` continues and reports each gap as an
-  `unresolved-source` warning. Missing third-party packages are unaffected —
-  they remain the dependency check's `missing-dependency` finding (#23).
-- Dead code: the alternates of a conditional `import`/`export`
-  (`if (dart.library.io) …`) are reachable whenever the default branch is, so
-  platform-specific implementations are no longer reported dead (#24).
-- Duplication: directives are excluded from the token stream, so files that
-  merely share an import header no longer match each other. On a 17k-line
-  package this removed 400+ of 928 findings, all noise (#15).
-- Health score: a duplicated block now weighs `tokens / minBlockSize` instead
-  of 1, so a copied function counts for far more than a repeated line, and the
-  health message reports the weighted total it was computed from (#25).
+### Breaking
+
+- Duplication's default minimum block is `50` tokens, up from `20`. Pass
+  `--min-block-size 20` to restore the old threshold.
+- Duplication skips test code (`test/`, `integration_test/`, `test_driver/`)
+  unless `--include-tests` or `duplication.include-tests: true` is set.
+- The health score is measured against declared functions, so closures no
+  longer dilute it: 4 points per percent of functions over the complexity
+  limit, and 1 point per weighted finding per hundred functions. Scores are
+  lower than in 0.3.0 for the same code.
+- Library: `analyze` and `analyzeWorkspace` run every check by default,
+  including complexity, as the `dallow analyze` command does. `SarifReporter`
+  no longer implements `Reporter`; `Reporter(ReportFormat.sarif)` is
+  unchanged.
+- A package whose own source cannot be resolved is refused with exit `78`.
+  `--allow-unresolved` analyses it anyway and reports each gap as an
+  `unresolved-source` warning (#23).
+
+### Added
+
+- `dallow.yaml` configuration: `exclude` globs, `fail-on`, per-kind `rules`,
+  `dependencies.ignore`, `circular.max-cycle-size`, `duplication.*` and
+  `complexity.max-complexity`. `--config <file>` names another file. A
+  recursive run falls back from each package to the workspace root. Unknown
+  keys, wrong types and invalid globs exit `64`.
+- Generated code (`*.g.dart`, `*.freezed.dart`, `*.gr.dart`, `*.mocks.dart`,
+  `*.gen.dart`, protobuf outputs, and files with a generated-code banner) is
+  left out of the findings and the health score while still feeding the symbol
+  graph. `flutter gen-l10n` output is recognised from `l10n.yaml` or the
+  tool's defaults. `--include-generated` reports it.
+- The health message carries a letter grade (A–F) and the number of functions
+  over the complexity limit.
+- `dallow --version` prints the dallow and `analyzer` versions.
+- Library: `analyze` and `analyzeWorkspace` take `config:`, `reportGenerated:`
+  and `duplicationIncludesTests:`, and accept a relative path.
+  `DallowConfig`, `RuleLevel`, `ConfigException` and `SourceScope` are
+  exported.
+- `doc/open-source-runs.md` reports results on five open-source projects, and
+  `doc/fallow-parity.md` compares dallow with fallow.
+
+### Fixed
+
+Dead code no longer reports:
+
+- members of a generic class or extension reached through an instantiated
+  type;
+- fields read only through `++`, `+=` or `??=`, and setters or `[]=`
+  operators invoked only by assignment;
+- operators, `call()` methods and getters read through an object pattern;
+- public members inherited by an exported type from an unexported supertype;
+- symbols referenced only from an unnamed extension;
+- constants used only as an annotation on a field or top-level variable;
+- fields of a `dart:ffi` `Struct` or `Union`;
+- getters whose setter is in use;
+- symbols annotated `@pragma('vm:entry-point')`;
+- the alternates of a conditional import or export, including extension
+  members (#24).
+
+Other fixes:
+
+- Dependencies: imports are read from parsed directives, so an `import` line
+  inside a string literal is no longer reported as a missing dependency.
+  `build_config` and `sky_engine` are not reported unused.
+- Duplication: directives are excluded, so files that share an import header
+  no longer match each other (#15).
+- Health score: a duplicated block weighs `tokens / minBlockSize` (#25).
+- `--changed-since` returned an empty change set when the package path
+  contained a symbolic link.
+- `analyze` completes on Dart 3.10 dot shorthands in constant contexts.
+
+### Performance
+
+- Duplication is about 40 times faster on large packages, with identical
+  findings.
 
 ## 0.3.0 - 2026-06-28
 

@@ -32,8 +32,40 @@ Future<void> main(List<String> args) async {
     exit(code);
   } on UsageException catch (e) {
     stderr.writeln(e);
-    exit(64);
+    exit(_ExitCode.usage);
   }
+}
+
+abstract final class _ExitCode {
+  static const success = 0;
+  static const usage = 64;
+  static const sdkNotFound = 69;
+  static const unresolvedSource = 78;
+}
+
+/// A problem with how the command was invoked.
+class _UsageError implements Exception {
+  _UsageError(this.message);
+
+  final String message;
+}
+
+/// The settings given as command-line flags. A null field means the flag was
+/// absent and the configured value applies.
+class _Overrides {
+  const _Overrides({
+    required this.maxCycleSize,
+    required this.minBlockSize,
+    required this.maxComplexity,
+    required this.reportGenerated,
+    required this.duplicationIncludesTests,
+  });
+
+  final int? maxCycleSize;
+  final int? minBlockSize;
+  final int? maxComplexity;
+  final bool? reportGenerated;
+  final bool? duplicationIncludesTests;
 }
 
 abstract class _CheckCommand extends Command<int> {
@@ -50,8 +82,22 @@ abstract class _CheckCommand extends Command<int> {
       ..addOption(
         'fail-on',
         allowed: ['error', 'warning', 'info', 'never'],
-        defaultsTo: 'error',
-        help: 'Lowest severity that causes a non-zero exit code.',
+        help: 'Lowest severity that causes a non-zero exit code. Defaults to '
+            'the fail-on value in ${DallowConfig.fileName}, else error.',
+      )
+      ..addOption(
+        'config',
+        abbr: 'c',
+        help: 'Read settings from this file instead of the '
+            '${DallowConfig.fileName} at the package root. In a recursive '
+            'run it applies to every package.',
+      )
+      ..addFlag(
+        'include-generated',
+        negatable: false,
+        help: 'Report findings located in generated code (*.g.dart, '
+            '*.freezed.dart, files with a generated-code header, ...). They '
+            'are left out by default.',
       )
       ..addOption(
         'max-cycle-size',
@@ -77,15 +123,22 @@ abstract class _CheckCommand extends Command<int> {
             '0, instead of gating. Run once to adopt the gate on an existing '
             'codebase.',
       )
+      ..addFlag(
+        'include-tests',
+        negatable: false,
+        help: 'Scan test code (test/, integration_test/, test_driver/) for '
+            'duplication. Tests are left out of duplicate detection by '
+            'default; every other check always covers them.',
+      )
       ..addOption(
         'min-block-size',
-        help: 'Minimum duplicate token block size. Defaults to '
-            '$defaultDuplicateBlockSize.',
+        help: 'Minimum duplicate token block size. Defaults to the '
+            'configured value, else $defaultDuplicateBlockSize.',
       )
       ..addOption(
         'max-complexity',
         help: 'Maximum cyclomatic complexity before a function is reported. '
-            'Defaults to $defaultMaxComplexity.',
+            'Defaults to the configured value, else $defaultMaxComplexity.',
       )
       ..addFlag(
         'report-unused-ignores',
@@ -118,133 +171,171 @@ abstract class _CheckCommand extends Command<int> {
 
   @override
   Future<int> run() async {
-    final rest = argResults!.rest;
-    final root = p.normalize(p.absolute(rest.isEmpty ? '.' : rest.first));
-    if (!Directory(root).existsSync()) {
-      stderr.writeln('No such directory: $root');
-      return 64;
-    }
-
-    final maxCycleSizeRaw = argResults!['max-cycle-size'] as String?;
-    final maxCycleSize =
-        maxCycleSizeRaw == null ? null : int.tryParse(maxCycleSizeRaw);
-    if (maxCycleSizeRaw != null && maxCycleSize == null) {
-      stderr.writeln('--max-cycle-size must be an integer: $maxCycleSizeRaw');
-      return 64;
-    }
-    if (maxCycleSize != null && maxCycleSize < minCycleSize) {
-      stderr.writeln(
-        '--max-cycle-size must be at least $minCycleSize (the smallest '
-        'possible cycle); $maxCycleSize would skip every cycle and disable '
-        'the check.',
-      );
-      return 64;
-    }
-    final minBlockSizeRaw = argResults!['min-block-size'] as String?;
-    final minBlockSize =
-        minBlockSizeRaw == null ? null : int.tryParse(minBlockSizeRaw);
-    if (minBlockSizeRaw != null && minBlockSize == null) {
-      stderr.writeln('--min-block-size must be an integer: $minBlockSizeRaw');
-      return 64;
-    }
-    if (minBlockSize != null && minBlockSize < minDuplicateBlockSize) {
-      stderr.writeln(
-        '--min-block-size must be at least $minDuplicateBlockSize; smaller '
-        'matches are too noisy to gate reliably.',
-      );
-      return 64;
-    }
-    final maxComplexityRaw = argResults!['max-complexity'] as String?;
-    final maxComplexity =
-        maxComplexityRaw == null ? null : int.tryParse(maxComplexityRaw);
-    if (maxComplexityRaw != null && maxComplexity == null) {
-      stderr.writeln('--max-complexity must be an integer: $maxComplexityRaw');
-      return 64;
-    }
-    if (maxComplexity != null && maxComplexity < minComplexityThreshold) {
-      stderr.writeln(
-        '--max-complexity must be at least $minComplexityThreshold.',
-      );
-      return 64;
-    }
-
-    final recursive = argResults!['recursive'] as bool;
-    WorkspaceDiscovery? discovery;
-    if (recursive) {
-      try {
-        discovery = discoverWorkspace(root);
-      } on UnsupportedGlobException catch (e) {
-        stderr.writeln(e);
-        return 64;
-      }
-      if (discovery.packageRoots.isEmpty) {
-        stderr.writeln(
-          'No packages found under $root. Looked for melos.yaml packages, a '
-          'pub workspace (pubspec.yaml with a workspace: list), then any '
-          'nested pubspec.yaml.',
-        );
-        return 64;
-      }
-      // Informational, on stderr so stdout stays clean for json/markdown.
-      stderr.writeln(
-        'Scanning ${discovery.packageRoots.length} packages '
-        '(${discovery.strategy.name}).',
-      );
-    }
-
-    final allowUnresolved = argResults!['allow-unresolved'] as bool;
-    final List<Finding> findings;
     try {
-      findings = recursive
-          ? await analyzeWorkspace(
-              root,
-              checks: checks,
-              maxCycleSize: maxCycleSize,
-              minBlockSize: minBlockSize,
-              maxComplexity: maxComplexity,
-              allowUnresolved: allowUnresolved,
-              discovery: discovery,
-            )
-          : await analyze(
-              root,
-              checks: checks,
-              maxCycleSize: maxCycleSize,
-              minBlockSize: minBlockSize,
-              maxComplexity: maxComplexity,
-              allowUnresolved: allowUnresolved,
-            );
+      return await _run();
+    } on _UsageError catch (e) {
+      return _fail(e.message, _ExitCode.usage);
+    } on ConfigException catch (e) {
+      return _fail(e.message, _ExitCode.usage);
+    } on GateException catch (e) {
+      return _fail(e.message, _ExitCode.usage);
+    } on UnsupportedGlobException catch (e) {
+      return _fail('$e', _ExitCode.usage);
     } on SdkNotFoundException catch (e) {
-      stderr.writeln(e.message);
-      return 69;
+      return _fail(e.message, _ExitCode.sdkNotFound);
     } on UnresolvedSourceException catch (e) {
-      stderr.writeln(e.message);
-      return 78;
+      return _fail(e.message, _ExitCode.unresolvedSource);
     }
+  }
+
+  int _fail(String message, int exitCode) {
+    stderr.writeln(message);
+    return exitCode;
+  }
+
+  Future<int> _run() async {
+    final root = _root();
+    final explicitConfig = _explicitConfig();
+    final rootConfig = explicitConfig ?? DallowConfig.forPackage(root);
+    final overrides = _overrides();
+
+    final findings = (argResults!['recursive'] as bool)
+        ? await _analyzeWorkspace(root, explicitConfig, overrides)
+        : await analyze(
+            root,
+            checks: checks,
+            allowUnresolved: _allowUnresolved,
+            config: rootConfig.overriddenBy(
+              maxCycleSize: overrides.maxCycleSize,
+              minBlockSize: overrides.minBlockSize,
+              maxComplexity: overrides.maxComplexity,
+              reportGenerated: overrides.reportGenerated,
+              duplicationIncludesTests: overrides.duplicationIncludesTests,
+            ),
+          );
 
     // --write-baseline short-circuits the gate: capture all current findings
     // and exit 0, regardless of --changed-since / --baseline.
     final writeBaseline = argResults!['write-baseline'] as String?;
-    if (writeBaseline != null) {
-      File(writeBaseline).writeAsStringSync(encodeBaseline(findings));
-      stderr.writeln(
-        'Wrote baseline with ${findings.length} finding(s) to $writeBaseline',
-      );
-      return 0;
-    }
+    if (writeBaseline != null) return _writeBaseline(writeBaseline, findings);
 
-    final List<Finding> gated;
-    try {
-      gated = await _applyGate(findings, root);
-    } on GateException catch (e) {
-      stderr.writeln(e.message);
-      return 64;
-    }
-
+    final gated = await _applyGate(findings, root);
     final format = ReportFormat.values.byName(argResults!['format'] as String);
     stdout.writeln(Reporter(format).render(gated));
+    return exitCodeFor(gated, failOn: _failOn(rootConfig));
+  }
 
-    final failOn = FailOn.values.byName(argResults!['fail-on'] as String);
-    return exitCodeFor(gated, failOn: failOn);
+  /// The package or workspace directory named on the command line.
+  String _root() {
+    final rest = argResults!.rest;
+    final root = p.normalize(p.absolute(rest.isEmpty ? '.' : rest.first));
+    if (!Directory(root).existsSync()) {
+      throw _UsageError('No such directory: $root');
+    }
+    return root;
+  }
+
+  bool get _allowUnresolved => argResults!['allow-unresolved'] as bool;
+
+  /// The settings given as flags, each null when its flag is absent so the
+  /// configured value applies.
+  _Overrides _overrides() => _Overrides(
+        maxCycleSize: _threshold(
+          'max-cycle-size',
+          minimum: minCycleSize,
+          belowMinimum: 'the smallest possible cycle; a lower value would '
+              'skip every cycle and disable the check',
+        ),
+        minBlockSize: _threshold(
+          'min-block-size',
+          minimum: minDuplicateBlockSize,
+          belowMinimum: 'smaller matches are too noisy to gate reliably',
+        ),
+        maxComplexity: _threshold(
+          'max-complexity',
+          minimum: minComplexityThreshold,
+        ),
+        reportGenerated: _enabledOrNull('include-generated'),
+        duplicationIncludesTests: _enabledOrNull('include-tests'),
+      );
+
+  /// The integer given for [option], or null when the option is absent.
+  int? _threshold(
+    String option, {
+    required int minimum,
+    String? belowMinimum,
+  }) {
+    final raw = argResults![option] as String?;
+    if (raw == null) return null;
+    final value = int.tryParse(raw);
+    if (value == null) {
+      throw _UsageError('--$option must be an integer: $raw');
+    }
+    if (value < minimum) {
+      final reason = belowMinimum == null ? '' : ' ($belowMinimum)';
+      throw _UsageError('--$option must be at least $minimum$reason.');
+    }
+    return value;
+  }
+
+  Future<List<Finding>> _analyzeWorkspace(
+    String root,
+    DallowConfig? explicitConfig,
+    _Overrides overrides,
+  ) {
+    final discovery = discoverWorkspace(root);
+    if (discovery.packageRoots.isEmpty) {
+      throw _UsageError(
+        'No packages found under $root. Looked for melos.yaml packages, a '
+        'pub workspace (pubspec.yaml with a workspace: list), then any '
+        'nested pubspec.yaml.',
+      );
+    }
+    // Informational, on stderr so stdout stays clean for json/markdown.
+    stderr.writeln(
+      'Scanning ${discovery.packageRoots.length} packages '
+      '(${discovery.strategy.name}).',
+    );
+    return analyzeWorkspace(
+      root,
+      checks: checks,
+      maxCycleSize: overrides.maxCycleSize,
+      minBlockSize: overrides.minBlockSize,
+      maxComplexity: overrides.maxComplexity,
+      allowUnresolved: _allowUnresolved,
+      reportGenerated: overrides.reportGenerated,
+      duplicationIncludesTests: overrides.duplicationIncludesTests,
+      config: explicitConfig,
+      discovery: discovery,
+    );
+  }
+
+  int _writeBaseline(String path, List<Finding> findings) {
+    File(path).writeAsStringSync(encodeBaseline(findings));
+    stderr.writeln(
+      'Wrote baseline with ${findings.length} finding(s) to $path',
+    );
+    return _ExitCode.success;
+  }
+
+  /// True when the on/off [flag] was passed, else null so the configured
+  /// value applies.
+  bool? _enabledOrNull(String flag) =>
+      (argResults![flag] as bool) ? true : null;
+
+  /// The configuration named by `--config`, or null when the flag is absent
+  /// and each package's own `dallow.yaml` applies.
+  DallowConfig? _explicitConfig() {
+    final path = argResults!['config'] as String?;
+    return path == null ? null : DallowConfig.fromFile(path);
+  }
+
+  /// The gate threshold: the `--fail-on` flag, else the configured value,
+  /// else `error`.
+  FailOn _failOn(DallowConfig config) {
+    final flag = argResults!['fail-on'] as String?;
+    if (flag != null) return FailOn.values.byName(flag);
+    return config.failOn ?? FailOn.error;
   }
 
   /// Applies the PR-gate filters — inline `dallow-ignore` suppression, then

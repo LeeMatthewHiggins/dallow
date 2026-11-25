@@ -209,7 +209,8 @@ int a = 1;
       File(p.join(dir.path, 'b_dup.dart')).writeAsStringSync('int beta$block');
     }
 
-    List<Finding> dupFindings() => const DuplicationCheck().run(dir.path);
+    List<Finding> dupFindings() =>
+        const DuplicationCheck().run(dir.path, minBlockSize: 20);
 
     test('the duplication finding fires without a directive', () {
       writePair(withIgnore: false);

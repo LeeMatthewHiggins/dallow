@@ -48,7 +48,8 @@ Future<Set<String>> changedFilesSince(
     ),
   );
 
-  final repoTop = toplevel.trim();
+  final repoTop = _canonical(toplevel.trim());
+  final canonicalRoot = _canonical(packageRoot);
   final changed = <String>{};
   for (final line in const LineSplitter().convert(out)) {
     final relPath = line.trim();
@@ -56,8 +57,10 @@ Future<Set<String>> changedFilesSince(
     // git paths are repo-relative with forward slashes; rebase onto the
     // package root and drop anything that escapes it.
     final abs = p.join(repoTop, relPath);
-    if (!p.equals(packageRoot, abs) && !p.isWithin(packageRoot, abs)) continue;
-    changed.add(p.relative(abs, from: packageRoot));
+    if (!p.equals(canonicalRoot, abs) && !p.isWithin(canonicalRoot, abs)) {
+      continue;
+    }
+    changed.add(p.relative(abs, from: canonicalRoot));
   }
   return changed;
 }
@@ -78,6 +81,17 @@ bool _keep(Finding finding, Set<String> changedFiles) {
   if (file == null) return true;
   if (file == 'pubspec.yaml') return true;
   return changedFiles.contains(p.normalize(file));
+}
+
+/// Resolves symbolic links in [directory] so paths reported by git (which are
+/// always canonical) and a caller-supplied root compare equal. Falls back to
+/// the normalised absolute path when the directory cannot be resolved.
+String _canonical(String directory) {
+  try {
+    return Directory(directory).resolveSymbolicLinksSync();
+  } on FileSystemException {
+    return p.normalize(p.absolute(directory));
+  }
 }
 
 /// Runs `git [args]` in [cwd]. Returns stdout on success; on a non-zero exit

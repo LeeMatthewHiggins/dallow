@@ -1,12 +1,13 @@
 # dallow examples
 
-dallow is a command-line tool, so the examples below are invocations rather
-than a Dart `main()`. Activate it once, then run it against any Dart or Flutter
-package.
+dallow is primarily a command-line tool, so most examples below are
+invocations. Activate it once, then run it against any Dart or Flutter package.
 
 ```sh
 dart pub global activate dallow
 ```
+
+To drive the same analysis from Dart code, see [example.dart](example.dart).
 
 ## Analyse a package
 
@@ -45,6 +46,18 @@ Or adopt the gate on a dirty codebase with a baseline:
 ```sh
 dallow analyze . --write-baseline .dallow-baseline.json   # capture today's findings
 dallow analyze . --baseline .dallow-baseline.json --fail-on warning
+```
+
+## Configure a package
+
+Keep thresholds and ignored paths in a `dallow.yaml` at the package root:
+
+```yaml
+exclude:
+  - lib/l10n/**
+fail-on: warning
+complexity:
+  max-complexity: 15
 ```
 
 ## Scan a monorepo

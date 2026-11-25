@@ -1,0 +1,10 @@
+exclude:
+  - lib/src/legacy/**
+fail-on: warning
+rules:
+  dead-code: error
+dependencies:
+  ignore:
+    - meta
+complexity:
+  max-complexity: 2

@@ -201,54 +201,83 @@ class UnsupportedGlobException implements Exception {
 /// brace — throws [UnsupportedGlobException]. Translating such a glob to a
 /// literal would let it silently match nothing and under-scan the workspace,
 /// so it is refused rather than dropped.
-RegExp _globToRegExp(String glob) {
-  final buffer = StringBuffer('^');
-  var braceDepth = 0;
-  for (var i = 0; i < glob.length; i++) {
-    final char = glob[i];
-    if (char == '*') {
-      final isDoubleStar = i + 1 < glob.length && glob[i + 1] == '*';
-      if (isDoubleStar) {
-        i++;
-        if (i + 1 < glob.length && glob[i + 1] == '/') {
-          // `**/` also matches zero leading segments (`**/example` ~ `example`).
-          i++;
-          buffer.write('(?:.*/)?');
-        } else {
-          buffer.write('.*');
-        }
-      } else {
-        buffer.write('[^/]*');
-      }
-    } else if (char == '?') {
-      buffer.write('[^/]');
-    } else if (char == '{') {
-      braceDepth++;
-      buffer.write('(?:');
-    } else if (char == '}') {
-      if (braceDepth == 0) {
-        throw UnsupportedGlobException(glob, 'unbalanced "}"');
-      }
-      braceDepth--;
-      buffer.write(')');
-    } else if (char == ',' && braceDepth > 0) {
-      buffer.write('|');
-    } else if (char == '[' || char == ']') {
-      throw UnsupportedGlobException(
-        glob,
-        'character classes ("[…]") are not supported',
-      );
-    } else if (r'\^$.|+()'.contains(char)) {
-      buffer
-        ..write(r'\')
-        ..write(char);
-    } else {
-      buffer.write(char);
+RegExp _globToRegExp(String glob) => _GlobTranslator(glob).translate();
+
+class _GlobTranslator {
+  _GlobTranslator(this._glob);
+
+  static const _regExpMetacharacters = r'\^$.|+()';
+  static const _pathSeparator = '/';
+
+  final String _glob;
+  final StringBuffer _pattern = StringBuffer('^');
+  int _braceDepth = 0;
+  int _index = 0;
+
+  RegExp translate() {
+    for (_index = 0; _index < _glob.length; _index++) {
+      _translate(_glob[_index]);
+    }
+    if (_braceDepth != 0) {
+      throw UnsupportedGlobException(_glob, 'unbalanced "{"');
+    }
+    _pattern.write(r'$');
+    return RegExp(_pattern.toString());
+  }
+
+  void _translate(String char) {
+    switch (char) {
+      case '*':
+        _star();
+      case '?':
+        _pattern.write('[^/]');
+      case '{':
+        _braceDepth++;
+        _pattern.write('(?:');
+      case '}':
+        _closeBrace();
+      case '[' || ']':
+        throw UnsupportedGlobException(
+          _glob,
+          'character classes ("[…]") are not supported',
+        );
+      default:
+        _literal(char);
     }
   }
-  if (braceDepth != 0) {
-    throw UnsupportedGlobException(glob, 'unbalanced "{"');
+
+  /// `*` matches within one path segment and `**` across segments. `**/`
+  /// also matches zero leading segments, so `**/example` matches `example`.
+  void _star() {
+    if (_next != '*') {
+      _pattern.write('[^/]*');
+      return;
+    }
+    _index++;
+    if (_next != _pathSeparator) {
+      _pattern.write('.*');
+      return;
+    }
+    _index++;
+    _pattern.write('(?:.*/)?');
   }
-  buffer.write(r'$');
-  return RegExp(buffer.toString());
+
+  void _closeBrace() {
+    if (_braceDepth == 0) {
+      throw UnsupportedGlobException(_glob, 'unbalanced "}"');
+    }
+    _braceDepth--;
+    _pattern.write(')');
+  }
+
+  void _literal(String char) {
+    if (char == ',' && _braceDepth > 0) {
+      _pattern.write('|');
+      return;
+    }
+    if (_regExpMetacharacters.contains(char)) _pattern.write(r'\');
+    _pattern.write(char);
+  }
+
+  String? get _next => _index + 1 < _glob.length ? _glob[_index + 1] : null;
 }

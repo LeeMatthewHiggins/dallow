@@ -1,0 +1,7 @@
+name: generated_fixture
+description: Fixture package exercising generated-code awareness and config.
+version: 0.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.6.0

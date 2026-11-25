@@ -61,7 +61,7 @@ cp "$repo_root/LICENSE" "$repo_root/README.md" "$stage/"
 {
   echo "---"
   echo "name: dallow"
-  echo "description: Codebase intelligence for Dart/Flutter — finds dead code, dependency hygiene problems, and circular imports. Reads stdout as JSON or text."
+  echo "description: Codebase intelligence for Dart/Flutter — finds dead code, dependency drift, circular imports, duplicated code, and complexity hot spots. Reads stdout as JSON, SARIF, markdown or text."
   echo "platforms:"
   for bin in "${binaries[@]}"; do
     name="$(basename "$bin")"
